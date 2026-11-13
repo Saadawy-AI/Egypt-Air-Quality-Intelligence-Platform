@@ -34,7 +34,7 @@ Docker Desktop with WSL2 integration enabled, and Docker Compose v2.
 
 ## Local endpoints
 - Airflow: http://localhost:8082
-- Spark Master UI: http://localhost:8080
+- Spark Master UI: http://localhost:8083
 - Spark Worker UI: http://localhost:8081
 - Streamlit: http://localhost:8501
 - Kafka bootstrap (host): `localhost:9092`
