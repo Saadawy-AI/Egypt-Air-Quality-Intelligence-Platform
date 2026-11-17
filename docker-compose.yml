@@ -68,6 +68,36 @@ services:
       retries: 10
     restart: unless-stopped
 
+  kafka-init:
+    image: apache/kafka:4.1.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        for topic in air-quality weather openaq-measurements; do
+          /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server kafka:29092 \
+            --create --if-not-exists \
+            --topic "$$topic" \
+            --partitions 3 \
+            --replication-factor 1
+        done
+    restart: "no"
+
+  ingestion:
+    build:
+      context: .
+      dockerfile: ingestion/Dockerfile
+    environment:
+      OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    restart: "no"
+
   mqtt:
     image: eclipse-mosquitto:2
     ports:
@@ -87,13 +117,19 @@ services:
     volumes:
       - ./data:/opt/project-data
       - ./spark:/opt/spark-apps:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/spark-master/7077'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     restart: unless-stopped
 
   spark-worker:
     image: apache/spark:3.5.7
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "--webui-port", "8081"]
     depends_on:
-      - spark-master
+      spark-master:
+        condition: service_healthy
     environment:
       SPARK_WORKER_MEMORY: 2G
       SPARK_WORKER_CORES: 2
@@ -102,7 +138,36 @@ services:
     volumes:
       - ./data:/opt/project-data
       - ./spark:/opt/spark-apps:ro
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/8081'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     restart: unless-stopped
+
+  spark-bronze:
+    image: apache/spark:3.5.7
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - spark://spark-master:7077
+      - --conf
+      - spark.jars.ivy=/tmp/.ivy2
+      - --packages
+      - org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.7
+      - /opt/spark-apps/jobs/bronze_ingestion.py
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      spark-worker:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      MAX_OFFSETS_PER_TRIGGER: ${MAX_OFFSETS_PER_TRIGGER:-500}
+    volumes:
+      - ./data:/opt/project-data
+      - ./spark:/opt/spark-apps:ro
+    restart: on-failure
 
   airflow-init:
     <<: *airflow-common

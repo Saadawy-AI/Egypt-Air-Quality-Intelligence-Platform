@@ -1,0 +1,61 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Current Docker Status",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"ps",
+				"-a"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Recent Pipeline Errors",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"logs",
+				"--since",
+				"2h",
+				"--tail",
+				"100",
+				"kafka",
+				"ingestion",
+				"spark-bronze",
+				"spark-master",
+				"spark-worker"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Verify Current Compose",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"config",
+				"--quiet"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Verify Kafka Health",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"inspect",
+				"--format={{json .State.Health}}",
+				"egypt-air-quality-kafka-1"
+			],
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}

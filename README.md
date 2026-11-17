@@ -30,7 +30,21 @@ Docker Desktop with WSL2 integration enabled, and Docker Compose v2.
    `docker compose up -d --build`
 
 6. Check services:
-   `docker compose ps`
+   `docker compose ps -a`
+
+The Compose stack creates the Kafka topics, runs one ingestion pass, and
+starts the Spark Bronze streaming job. Set `OPENAQ_API_KEY` in `.env` to
+enable OpenAQ; Open-Meteo ingestion does not require an API key. To run
+ingestion again after the initial pass, use:
+
+`docker compose run --rm ingestion`
+
+Check the pipeline with:
+
+`docker compose logs -f kafka-init ingestion spark-bronze`
+
+Spark Bronze Parquet data and checkpoints are stored under `./data/bronze`
+and `./data/checkpoints`.
 
 ## Local endpoints
 - Airflow: http://localhost:8082
