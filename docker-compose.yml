@@ -1,20 +1,29 @@
 name: egypt-air-quality
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:3.0.6
+  image: egypt-air-quality-airflow:local
+  build:
+    context: .
+    dockerfile: airflow/Dockerfile
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${AIRFLOW_DB_PASSWORD}@postgres:5432/airflow
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth
-    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     _PIP_ADDITIONAL_REQUIREMENTS: ""
+    PYTHONPATH: /opt/airflow
+    OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}
+    KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
+    AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
     - ./airflow/plugins:/opt/airflow/plugins
+    - ./ingestion:/opt/airflow/ingestion:ro
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     postgres:
@@ -169,10 +178,57 @@ services:
       - ./spark:/opt/spark-apps:ro
     restart: on-failure
 
+  spark-silver:
+    image: apache/spark:3.5.7
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - spark://spark-master:7077
+      - /opt/spark-apps/jobs/silver_ingestion.py
+    depends_on:
+      spark-bronze:
+        condition: service_started
+      spark-worker:
+        condition: service_healthy
+    volumes:
+      - ./data:/opt/project-data
+      - ./spark:/opt/spark-apps:ro
+    restart: on-failure
+
+  spark-gold:
+    image: apache/spark:3.5.7
+    command:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - spark://spark-master:7077
+      - /opt/spark-apps/jobs/gold_aggregation.py
+    depends_on:
+      spark-silver:
+        condition: service_started
+      spark-worker:
+        condition: service_healthy
+    volumes:
+      - ./data:/opt/project-data
+      - ./spark:/opt/spark-apps:ro
+    restart: on-failure
+
   airflow-init:
     <<: *airflow-common
-    entrypoint: /bin/bash
-    command: -c "airflow db migrate && airflow users create --username ${AIRFLOW_ADMIN_USER} --password ${AIRFLOW_ADMIN_PASSWORD} --firstname Project --lastname Admin --role Admin --email admin@example.com || true"
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        airflow db migrate
+        if airflow users list | grep -Fq -- "$$AIRFLOW_ADMIN_USER"; then
+          echo "Airflow admin user already exists."
+        else
+          airflow users create \
+            --username "$$AIRFLOW_ADMIN_USER" \
+            --password "$$AIRFLOW_ADMIN_PASSWORD" \
+            --firstname Project \
+            --lastname Admin \
+            --role Admin \
+            --email admin@example.com
+        fi
     restart: "no"
 
   airflow-api-server:
@@ -215,12 +271,10 @@ services:
     ports:
       - "8501:8501"
     environment:
-      DATABASE_URL: postgresql://airquality:${APP_DB_PASSWORD}@postgres:5432/airquality
+      GOLD_DATA_DIR: /opt/project-data/gold/hourly_measurements
+      DASHBOARD_LOOKBACK_DAYS: ${DASHBOARD_LOOKBACK_DAYS:-30}
     volumes:
-      - ./streamlit_app:/app
-    depends_on:
-      postgres:
-        condition: service_healthy
+      - ./data:/opt/project-data:ro
     restart: unless-stopped
 
 volumes:

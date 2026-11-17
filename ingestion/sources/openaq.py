@@ -84,12 +84,19 @@ class OpenAQClient:
         response.raise_for_status()
 
         try:
-            return response.json()
+            payload = response.json()
 
         except ValueError as error:
             raise OpenAQTransientError(
                 "OpenAQ returned an invalid JSON response."
             ) from error
+
+        if not isinstance(payload, dict):
+            raise OpenAQTransientError(
+                "OpenAQ returned an invalid JSON payload."
+            )
+
+        return payload
 
     # ==========================================
     # PAGINATION

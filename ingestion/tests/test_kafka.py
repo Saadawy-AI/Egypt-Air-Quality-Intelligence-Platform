@@ -76,6 +76,12 @@ def test_unsupported_source():
         KafkaProducerClient.get_topic(record)
 
 
+def test_get_topic_rejects_non_dictionary_record():
+
+    with pytest.raises(TypeError, match="dictionary"):
+        KafkaProducerClient.get_topic(None)
+
+
 # ==========================================
 # RECORD KEY TESTS
 # ==========================================
@@ -109,6 +115,20 @@ def test_get_record_key_metadata_fallback():
 
     assert key == (
         "openaq:123:2026-11-14T12:00:00Z"
+    )
+
+
+@pytest.mark.parametrize("metadata", [None, [], "invalid", 42])
+def test_get_record_key_handles_invalid_metadata(metadata):
+
+    record = {
+        "source": "openaq",
+        "metadata": metadata,
+        "timestamp": "2026-11-14T12:00:00Z"
+    }
+
+    assert KafkaProducerClient.get_record_key(record) == (
+        "openaq:unknown:2026-11-14T12:00:00Z"
     )
 
 
