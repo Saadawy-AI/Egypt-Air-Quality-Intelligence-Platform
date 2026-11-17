@@ -59,6 +59,9 @@ class KafkaProducerClient:
     @staticmethod
     def get_topic(record):
 
+        if not isinstance(record, dict):
+            raise TypeError("Record must be a dictionary.")
+
         source = record.get("source")
 
         topics = {
@@ -89,9 +92,16 @@ class KafkaProducerClient:
     @staticmethod
     def get_record_key(record):
 
+        if not isinstance(record, dict):
+            raise TypeError("Record must be a dictionary.")
+
+        metadata = record.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+
         location = (
             record.get("governorate")
-            or record.get("metadata", {}).get("location_id")
+            or metadata.get("location_id")
             or "unknown"
         )
 
