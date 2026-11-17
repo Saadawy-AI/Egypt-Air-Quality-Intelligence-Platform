@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.pyc
+logs/
+data/bronze/
+data/checkpoints/
+
+.venv/
+pycache/
+*.py[cod]
+.pytest_cache/

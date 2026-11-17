@@ -1,0 +1,7 @@
+requests
+python-dotenv
+pandas
+pydantic
+kafka-python
+paho-mqtt
+pytest
