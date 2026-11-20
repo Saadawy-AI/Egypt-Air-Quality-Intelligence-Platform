@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta, timezone
 
 from airflow import DAG
@@ -5,9 +6,13 @@ from airflow.providers.standard.operators.python import PythonOperator
 
 
 def run_ingestion():
-    from ingestion.main import run_ingestion as ingest
+    os.umask(0o002)
+    from ingestion.build_bronze import main as build_bronze
 
-    ingest()
+    import sys
+
+    sys.argv = ["build_bronze"]
+    build_bronze()
 
 
 with DAG(

@@ -98,6 +98,293 @@
 			"isBackground": false,
 			"problemMatcher": [],
 			"group": "build"
+		},
+		{
+			"label": "start-preazure-stack",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"up",
+				"-d",
+				"--build"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "refresh-compose-stack",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"up",
+				"-d",
+				"--build",
+				"spark-silver",
+				"spark-gold",
+				"streamlit"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "run-compose-ingestion",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"run",
+				"--rm",
+				"ingestion"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "pipeline-logs",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"logs",
+				"--tail",
+				"120",
+				"kafka",
+				"ingestion",
+				"spark-bronze"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "bronze-file-check",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-Command",
+				"Get-ChildItem -Recurse data\\bronze -Filter *.parquet | Measure-Object -Property Length -Sum | Select-Object Count,@{Name='SizeMB';Expression={[math]::Round($_.Sum/1MB,2)}}"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "docker-health-retry",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"info"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "docker-engine-final-check",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"version"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "activate-hourly-bronze-schedule",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"up",
+				"-d",
+				"--build",
+				"airflow-init",
+				"airflow-api-server",
+				"airflow-scheduler",
+				"airflow-dag-processor",
+				"airflow-triggerer"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "apply-bronze-schedule-stack",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"up",
+				"-d",
+				"--build"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "verify-airflow-dag-import",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"exec",
+				"-T",
+				"airflow-scheduler",
+				"airflow",
+				"dags",
+				"list",
+				"--output",
+				"table"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "verify-spark-service-logs",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"logs",
+				"--tail",
+				"120",
+				"spark-silver",
+				"spark-gold"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "verify-stack-running",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"ps",
+				"-a"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "airflow-and-spark-latest",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"logs",
+				"--tail",
+				"160",
+				"airflow-scheduler",
+				"airflow-dag-processor",
+				"spark-worker",
+				"spark-silver",
+				"spark-gold"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "airflow-task-run-status-now",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"exec",
+				"-T",
+				"airflow-scheduler",
+				"airflow",
+				"dags",
+				"list-runs",
+				"-d",
+				"egypt_air_quality_ingestion",
+				"--output",
+				"table"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "spark-bronze-silver-gold-logs-now",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"logs",
+				"--tail",
+				"160",
+				"spark-bronze",
+				"spark-silver",
+				"spark-gold"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "airflow-dag-status-now",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"exec",
+				"-T",
+				"airflow-scheduler",
+				"airflow",
+				"dags",
+				"list",
+				"--output",
+				"table"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "ingestion-run-log-now",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"logs",
+				"--tail",
+				"100",
+				"ingestion"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "airflow-runs-help-now",
+			"type": "shell",
+			"command": "docker",
+			"args": [
+				"compose",
+				"exec",
+				"-T",
+				"airflow-scheduler",
+				"airflow",
+				"dags",
+				"list-runs",
+				"--help"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
 		}
 	]
 }
