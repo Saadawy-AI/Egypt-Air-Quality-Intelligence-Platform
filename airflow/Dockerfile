@@ -6,6 +6,7 @@ COPY --chown=airflow:0 ingestion /opt/airflow/ingestion
 
 RUN pip install --no-cache-dir \
     python-dotenv \
-    kafka-python
+    kafka-python \
+    pyarrow
 
 ENV PYTHONPATH=/opt/airflow

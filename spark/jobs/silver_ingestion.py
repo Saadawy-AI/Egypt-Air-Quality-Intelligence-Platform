@@ -298,6 +298,7 @@ def create_stream(spark, topic, dataset_name):
     bronze_stream = (
         spark.readStream
         .schema(BRONZE_SCHEMA)
+        .option("pathGlobFilter", "part-*.parquet")
         .parquet(bronze_path)
     )
     records = parse_bronze_records(bronze_stream)

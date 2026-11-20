@@ -67,6 +67,7 @@ def create_stream(spark, topic, dataset_name):
         )
         .option("subscribe", topic)
         .option("startingOffsets", "earliest")
+        .option("failOnDataLoss", "false")
         .option(
             "maxOffsetsPerTrigger",
             MAX_OFFSETS_PER_TRIGGER
