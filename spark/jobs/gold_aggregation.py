@@ -6,7 +6,9 @@ from pyspark.sql.functions import (
     avg,
     col,
     count,
+    current_timestamp,
     explode,
+    expr,
     lit,
     map_entries,
     max as spark_max,
@@ -33,6 +35,7 @@ logger = logging.getLogger("GoldAggregation")
 PROJECT_DATA = "/opt/project-data"
 SILVER_BASE_PATH = os.path.join(PROJECT_DATA, "silver")
 GOLD_PATH = os.path.join(PROJECT_DATA, "gold", "hourly_measurements")
+CURRENT_GOLD_PATH = os.path.join(PROJECT_DATA, "gold", "current_measurements")
 CHECKPOINT_PATH = os.path.join(PROJECT_DATA, "checkpoints", "gold")
 
 DATASETS = ("air_quality", "openaq_measurements", "weather")
@@ -69,7 +72,7 @@ def create_spark_session():
     )
 
 
-def aggregate_silver(silver):
+def aggregate_silver(silver, current_only=False):
     openaq = (
         silver
         .filter(col("source") == "openaq")
@@ -109,6 +112,12 @@ def aggregate_silver(silver):
             & col("event_time").isNotNull()
         )
     )
+
+    if current_only:
+        measurements = measurements.filter(
+            (col("event_time") >= current_timestamp() - expr("INTERVAL 72 HOURS"))
+            & (col("event_time") <= current_timestamp())
+        )
 
     hourly = (
         measurements
@@ -167,7 +176,19 @@ def refresh_gold(batch, batch_id, spark):
         .partitionBy("window_date")
         .parquet(GOLD_PATH)
     )
-    logger.info("Refreshed Gold hourly aggregates | batch=%s", batch_id)
+
+    (
+        aggregate_silver(silver, current_only=True)
+        .write
+        .mode("overwrite")
+        .partitionBy("window_date")
+        .parquet(CURRENT_GOLD_PATH)
+    )
+
+    logger.info(
+        "Refreshed Historical and Current Gold aggregates | batch=%s",
+        batch_id,
+    )
 
 
 def main():

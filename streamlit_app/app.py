@@ -28,7 +28,7 @@ def load_gold_data(path, start_date):
 
     dataset = ds.dataset(root, format="parquet", partitioning="hive")
     table = dataset.to_table(
-        filter=ds.field("window_date") >= date.fromisoformat(start_date)
+        filter=ds.field("window_date") >= start_date
     )
     return table.to_pandas()
 
@@ -40,10 +40,19 @@ if lookback_days <= 0:
 start_date = (date.today() - timedelta(days=lookback_days - 1)).isoformat()
 gold_data = load_gold_data(str(gold_data_dir), start_date)
 
+if not gold_data.empty:
+    window_times = pd.to_datetime(gold_data["window_start"], utc=True)
+    now_utc = pd.Timestamp.now(tz="UTC")
+    cutoff_utc = now_utc - pd.Timedelta(hours=72)
+
+    gold_data = gold_data.loc[
+        (window_times >= cutoff_utc) & (window_times <= now_utc)
+    ].copy()
+
 if gold_data.empty:
     st.info(
-        "No Gold aggregates are available yet. Start the Compose stack and "
-        "wait for ingestion and Spark processing to complete."
+        "No measurements from the last 72 hours are available. "
+        "Check ingestion and Spark processing."
     )
     st.stop()
 
