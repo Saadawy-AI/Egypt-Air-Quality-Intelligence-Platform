@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-tests:
+    name: Python regression suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            ingestion/requirements.txt
+            postgres/requirements.txt
+            ml/requirements.txt
+            monitoring/requirements.txt
+
+      - name: Install test/runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            -r ingestion/requirements.txt \
+            -r postgres/requirements.txt \
+            -r ml/requirements.txt \
+            -r monitoring/requirements.txt \
+            streamlit
+
+      - name: Run deterministic offline test suite
+        run: python -m pytest -q
+
+  compose-validation:
+    name: Docker Compose validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create non-secret CI-only configuration
+        shell: bash
+        run: |
+          cp .env.example .env
+          cat > .env.airflow-jwt <<'EOF'
+          AIRFLOW__API_AUTH__JWT_SECRET=ci-only-not-a-real-secret
+          AIRFLOW__API__SECRET_KEY=ci-only-not-a-real-secret
+          EOF
+
+      - name: Validate Compose model
+        env:
+          WOKWI_TOPIC_PREFIX: ci-only-placeholder
+          CONTROL_API_TOKEN: ci-only-placeholder
+        run: docker compose config -q
+
+      - name: Check patch whitespace
+        run: git diff --check HEAD^ HEAD
