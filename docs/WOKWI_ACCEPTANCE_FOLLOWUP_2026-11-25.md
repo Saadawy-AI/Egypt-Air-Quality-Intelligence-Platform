@@ -58,3 +58,43 @@ The Control API allowlist is restricted to python_iot -> iot-simulator and wokwi
 - Six-message wall-clock cadence acceptance: FAIL.
 - Actual Streamlit master OFF/ON button exercise: PASS.
 - Core services unaffected: PASS.
+
+
+## Recheck after Silver batch 73 — 2026-11-25 01:42 EET
+
+### Latest Bronze → Silver → Gold lineage
+The six previously identified Wokwi messages (Kafka partition 1, offsets 25088, 25091, 25094, 25097, 25100, 25103) were consumed by Silver batch 73.
+- Silver batch 73: 66 valid rows, 0 quarantined; all six Wokwi offsets above are present.
+- Gold batch 1000000073: committed successfully, source_rows=66.
+- Gold contains five Wokwi metrics (humidity, pm1, pm10, pm25, temperature), each with measurement_count=6.
+- PostgreSQL loader had not yet recorded batch 1000000073 at the time of this recheck. PostgreSQL end-to-end acceptance for these six messages remains pending; do not infer it from Gold completion.
+
+### Cadence interpretation correction
+The previous section labelled the six-message cadence FAIL solely because it compared host/bridge wall-clock intervals. The ESP32 payload timestamps provide the device/simulation clock and are the correct clock for evaluating the firmware's 10,000ms millis()-based sampling interval in Wokwi.
+
+For the six consecutive payload timestamps (23:15:13, 23:15:23, 23:15:35, 23:15:47, 23:15:57, 23:16:07 UTC), the measured intervals are 10, 12, 12, 10, and 10 seconds. Four of five intervals are exactly 10 seconds; two are 2 seconds over. This supports approximately 10-second cadence in simulation time, with small scheduling/clock granularity variance. It does not prove strict 10.000-second wall-clock delivery.
+
+The matching Bridge/Kafka wall-clock gaps were 31.2, 33.7, 33.6, 25.8, and 26.7 seconds. The discrepancy between payload clock and host clock indicates Wokwi simulated time was progressing at roughly 0.35x wall-clock during this run. MQTT-to-Kafka forwarding timestamps are effectively immediate after bridge acceptance; no evidence points to Kafka/bridge queueing as the cause. Do not shorten the firmware interval to 3 seconds as a workaround: the simulator speed factor may vary and doing so changes the measurement interval in simulation time.
+
+### Revised status
+- Six messages in Bronze and Silver batch 73: PASS.
+- Gold batch 1000000073 with six samples per Wokwi metric: PASS.
+- PostgreSQL load for Gold batch 1000000073: PENDING at recheck time.
+- Firmware sampling cadence: approximately 10 seconds in Wokwi simulation time (10/12/12/10/10 seconds); strict wall-clock 10-second delivery is not met because simulator time runs slower than host time.
+
+## PostgreSQL completion — 2026-11-25 01:43 EET
+
+Follow-up polling confirmed that PostgreSQL loaded Gold batch 1000000073 after 40 seconds. The loader log records 20 rows and processed_gold_batches contains (1000000073, 20).
+
+The Wokwi fact rows for the 23:00 UTC window now show measurement_count=14 for each of the five metrics. This is the expected cumulative count: 1 observation from Silver 71 + 7 from Silver 72 + 6 from Silver 73 = 14. The separate 22:00 UTC window still has one earlier Wokwi observation.
+
+Therefore the previously pending PostgreSQL check is now PASS. End-to-end lineage for the six newest messages is proven through Bronze → Silver 73 → Gold 1000000073 → PostgreSQL.
+
+## Final updated Wokwi acceptance status
+- Gold/PostgreSQL cumulative reconciliation: PASS (1 + 7 + 6 = 14 per metric for 23:00 UTC).
+- Latest six Wokwi records in Bronze: PASS.
+- Same six records in Silver batch 73: PASS.
+- Gold batch 1000000073: PASS (20 total rows; six Wokwi observations per metric).
+- PostgreSQL ledger and fact table: PASS (batch 1000000073 loaded; cumulative Wokwi count 14 per metric).
+- Firmware sampling cadence: approximately 10 seconds in Wokwi simulation time (observed 10/12/12/10/10 seconds).
+- Strict 10-second host wall-clock cadence: NOT MET because Wokwi simulated time was progressing at roughly 0.35x host wall-clock during this run.
