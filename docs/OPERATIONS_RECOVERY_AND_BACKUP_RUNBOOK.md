@@ -138,3 +138,10 @@ Still open:
 - CAPMAS reference GeoJSON parsed successfully as a FeatureCollection with 27 features.
 - Working tree is clean and tracks `origin/main`.
 - Refreshed the sanitized Git bundle after this commit; it verifies successfully and still contains 0 reachable private environment paths.
+
+
+## Post-cleanup Docker API observation — 2026-11-24 20:10 UTC
+- A final `docker compose ps` attempt returned HTTP 500 from the Docker Desktop Linux Engine API (`/v1.56/containers/json`). A separate `docker ps` / `docker version` request did not return within the inspection window.
+- Host memory at the time: approximately 2.17 GiB available (86.3% used).
+- The last successful Compose inspection before the final Git/documentation commits showed all 16 services Up. Git cleanup did not modify Docker volumes, containers, Compose service definitions at runtime, or WSL state.
+- No Docker Desktop restart, WSL shutdown, container recreation, or volume operation was attempted in response. Current container status is therefore **not freshly verified**; investigate Docker Desktop engine responsiveness during a controlled window before the next pipeline acceptance run.
