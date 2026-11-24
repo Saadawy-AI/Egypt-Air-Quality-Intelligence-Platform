@@ -72,6 +72,8 @@ def run_ingestion():
     openaq_client = None
     kafka_producer = None
 
+    source_failures = []
+
     summary = {
         "openaq": {
             "valid": 0,
@@ -127,7 +129,8 @@ def run_ingestion():
             openaq_client = OpenAQClient()
             logger.info("OpenAQ client initialized.")
 
-        except Exception:
+        except Exception as error:
+            source_failures.append(f"OpenAQ client initialization: {error}")
             logger.exception(
                 "Could not initialize OpenAQ client. "
                 "Continuing with other sources."
@@ -161,7 +164,8 @@ def run_ingestion():
                     )
                 )
 
-            except Exception:
+            except Exception as error:
+                source_failures.append(f"OpenAQ ingestion: {error}")
                 logger.exception(
                     "OpenAQ ingestion failed. "
                     "Continuing with Open-Meteo."
@@ -174,6 +178,17 @@ def run_ingestion():
 
         summary["openaq"]["valid"] = len(openaq_records)
         summary["openaq"]["rejected"] = len(openaq_rejected)
+
+        # A location-level API failure is a source failure, not merely a
+        # rejected measurement. Preserve valid records for at-least-once
+        # publishing, then fail the Airflow task so the source is retried.
+        for rejected in openaq_rejected:
+            errors = rejected.get("errors", [])
+            if any(str(error).startswith("Location processing failed:") for error in errors):
+                source_failures.append(
+                    "OpenAQ partial location failure: "
+                    + "; ".join(str(error) for error in errors)
+                )
 
         # ==========================================
         # 4. OPEN-METEO INGESTION
@@ -191,13 +206,28 @@ def run_ingestion():
                 weather_client
             )
 
-        except Exception:
+        except Exception as error:
+            source_failures.append(f"Open-Meteo ingestion: {error}")
             logger.exception(
                 "Open-Meteo ingestion failed unexpectedly."
             )
 
         summary["open_meteo"]["valid"] = len(meteo_records)
         summary["open_meteo"]["rejected"] = len(meteo_rejected)
+
+        # Fetch failures are reported separately from record validation
+        # rejects. A failed governorate/source must fail the DAG run even if
+        # another Open-Meteo source returned publishable records.
+        for rejected in meteo_rejected:
+            source_name = rejected.get("source")
+            errors = rejected.get("errors", [])
+            if source_name in ("open_meteo_air_quality", "open_meteo_weather") and any(
+                str(error).startswith("Fetch failed:") for error in errors
+            ):
+                source_failures.append(
+                    f"{source_name} fetch failure: "
+                    + "; ".join(str(error) for error in errors)
+                )
 
         # ==========================================
         # 5. INGESTION SUMMARY
@@ -325,6 +355,12 @@ def run_ingestion():
         logger.info("=" * 60)
         logger.info("Egypt Air Quality Ingestion Finished")
         logger.info("=" * 60)
+
+    if source_failures:
+        raise RuntimeError(
+            "One or more ingestion sources failed: "
+            + "; ".join(source_failures)
+        )
 
     if total_valid == 0:
         raise RuntimeError(

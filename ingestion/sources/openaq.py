@@ -244,6 +244,41 @@ class OpenAQClient:
 
         return measurements
 
+    def get_hourly_measurements(
+        self,
+        sensor_id,
+        date_from,
+        date_to
+    ):
+        """Retrieve hourly aggregated observations for a sensor.
+
+        OpenAQ recommends the /hours resource for hourly time series.
+        Keep the requested range bounded; callers should split long
+        histories into windows of one year or less.
+        """
+        params = {
+            "datetime_from": date_from,
+            "datetime_to": date_to
+        }
+
+        logger.info(
+            "Fetching hourly measurements for sensor_id=%s",
+            sensor_id
+        )
+
+        measurements = self._get_all_pages(
+            f"/sensors/{sensor_id}/hours",
+            params
+        )
+
+        logger.info(
+            "Retrieved %s hourly measurements for sensor_id=%s",
+            len(measurements),
+            sensor_id
+        )
+
+        return measurements
+
     # ==========================================
     # LOCATION LATEST MEASUREMENTS
     # ==========================================

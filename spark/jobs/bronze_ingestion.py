@@ -35,7 +35,7 @@ if MAX_OFFSETS_PER_TRIGGER <= 0:
 TOPICS = {
     "air-quality": "air_quality",
     "openaq-measurements": "openaq_measurements",
-    "weather": "weather"
+    "weather": "weather",
 }
 
 
@@ -67,7 +67,7 @@ def create_stream(spark, topic, dataset_name):
         )
         .option("subscribe", topic)
         .option("startingOffsets", "earliest")
-        .option("failOnDataLoss", "false")
+        .option("failOnDataLoss", "true")
         .option(
             "maxOffsetsPerTrigger",
             MAX_OFFSETS_PER_TRIGGER
@@ -93,6 +93,10 @@ def create_stream(spark, topic, dataset_name):
             to_date(col("ingestion_timestamp"))
         )
     )
+
+    # Bronze has one executor core. Coalesce each micro-batch to one writer
+    # partition to reduce small Parquet files without changing Kafka offsets.
+    bronze_records = bronze_records.coalesce(1)
 
     output_path = os.path.join(
         BRONZE_BASE_PATH,

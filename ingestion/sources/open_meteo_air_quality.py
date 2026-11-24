@@ -67,6 +67,7 @@ class OpenMeteoAirQualityClient:
     def get_all_governorates(self):
 
         results = []
+        failures = []
 
         for governorate in GOVERNORATES:
 
@@ -79,11 +80,18 @@ class OpenMeteoAirQualityClient:
                     governorate
                 )
 
-            except requests.exceptions.RequestException:
+            except requests.exceptions.RequestException as error:
                 logger.exception(
                     "Failed to fetch air quality for %s",
                     governorate
                 )
+                failures.append(f"{governorate}: {error}")
+
+        if failures:
+            raise RuntimeError(
+                "Open-Meteo Air Quality fetch failed for governorates: "
+                + "; ".join(failures)
+            )
 
         return results
 

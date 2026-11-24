@@ -5,3 +5,4 @@ pydantic
 kafka-python
 paho-mqtt
 pytest
+pyarrow

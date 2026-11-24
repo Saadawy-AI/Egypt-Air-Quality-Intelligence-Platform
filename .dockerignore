@@ -8,3 +8,7 @@ __pycache__
 *.py[cod]
 .pytest_cache
 data
+models
+
+# Keep local backup artifacts out of Docker build contexts.
+backups/

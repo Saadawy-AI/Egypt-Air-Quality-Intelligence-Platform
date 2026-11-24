@@ -10,8 +10,23 @@ data/silver/
 data/quarantine/
 data/gold/
 data/checkpoints/
+data/staging/
+models/
+data/ivy2/
 
 .venv/
 pycache/
 *.py[cod]
 .pytest_cache/
+
+# Local database and recovery backups contain project data; never commit them.
+/backups/
+
+
+# Local audit/test artifacts
+PROJECT_AUDIT_REPORT.txt
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/

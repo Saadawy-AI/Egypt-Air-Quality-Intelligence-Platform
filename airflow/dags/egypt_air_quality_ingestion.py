@@ -7,12 +7,9 @@ from airflow.providers.standard.operators.python import PythonOperator
 
 def run_ingestion():
     os.umask(0o002)
-    from ingestion.build_bronze import main as build_bronze
+    from ingestion.main import run_ingestion as publish_to_kafka
 
-    import sys
-
-    sys.argv = ["build_bronze"]
-    build_bronze()
+    return publish_to_kafka()
 
 
 with DAG(
