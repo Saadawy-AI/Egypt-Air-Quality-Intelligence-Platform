@@ -263,6 +263,26 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # Opt-in virtual IoT fleet. All records are labeled iot_sensor_simulator.
+  # Start explicitly with: docker compose --profile iot-simulator run --rm iot-simulator python -m ingestion.mqtt.simulator --once
+  iot-simulator:
+    profiles: ["iot-simulator"]
+    build:
+      context: .
+      dockerfile: ingestion/mqtt/Dockerfile
+    command: ["python", "-m", "ingestion.mqtt.simulator"]
+    environment:
+      MQTT_HOST: mqtt
+      MQTT_PORT: "1883"
+      MQTT_SIMULATOR_TOPIC_PREFIX: egypt/air-quality/simulated
+      IOT_SIMULATOR_INTERVAL_SECONDS: ${IOT_SIMULATOR_INTERVAL_SECONDS:-30}
+      IOT_SIMULATOR_DEVICE_COUNT: ${IOT_SIMULATOR_DEVICE_COUNT:-3}
+      IOT_SIMULATOR_SEED: ${IOT_SIMULATOR_SEED:-20261124}
+    depends_on:
+      mqtt:
+        condition: service_started
+    restart: "no"
+
   spark-master:
     image: apache/spark:3.5.7
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master", "--host", "spark-master", "--port", "7077", "--webui-port", "8080"]

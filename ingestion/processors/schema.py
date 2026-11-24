@@ -6,7 +6,8 @@ SCHEMA_VERSION = "1.0"
 SUPPORTED_SOURCES = {
     "openaq",
     "open_meteo_air_quality",
-    "open_meteo_weather"
+    "open_meteo_weather",
+    "iot_sensor_simulator"
 }
 
 

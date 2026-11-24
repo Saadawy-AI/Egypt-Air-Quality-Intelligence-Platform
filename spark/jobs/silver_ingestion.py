@@ -151,7 +151,7 @@ def parse_bronze_records(bronze_stream):
         """
     )
     sensor_valid = (
-        (col("source") == "esp32_pm_sensor")
+        col("source").isin("esp32_pm_sensor", "iot_sensor_simulator")
         & col("metadata").getItem("device_id").isNotNull()
         & (
             col("data").getItem("pm1").isNotNull()
@@ -163,7 +163,7 @@ def parse_bronze_records(bronze_stream):
     )
 
     source_matches_topic = (
-        ((col("topic") == "air-quality") & col("source").isin("open_meteo_air_quality", "esp32_pm_sensor"))
+        ((col("topic") == "air-quality") & col("source").isin("open_meteo_air_quality", "esp32_pm_sensor", "iot_sensor_simulator"))
         | ((col("topic") == "weather") & (col("source") == "open_meteo_weather"))
         | ((col("topic") == "openaq-measurements") & (col("source") == "openaq"))
     )
@@ -215,7 +215,7 @@ def parse_bronze_records(bronze_stream):
             "record_id",
             when(~col("_is_valid"), offset_record_id)
             .when(col("source") == "openaq", openaq_record_id)
-            .when(col("source") == "esp32_pm_sensor", sensor_record_id)
+            .when(col("source").isin("esp32_pm_sensor", "iot_sensor_simulator"), sensor_record_id)
             .otherwise(meteo_record_id),
         )
         .withColumn(
@@ -236,7 +236,7 @@ def validation_errors():
             CASE WHEN country_code IS NULL OR country_code <> 'EG'
                 THEN 'country must be EG' END,
             CASE WHEN source IS NULL OR topic IS NULL OR NOT (
-                (topic = 'air-quality' AND source IN ('open_meteo_air_quality', 'esp32_pm_sensor'))
+                (topic = 'air-quality' AND source IN ('open_meteo_air_quality', 'esp32_pm_sensor', 'iot_sensor_simulator'))
                 OR (topic = 'weather' AND source = 'open_meteo_weather')
                 OR (topic = 'openaq-measurements' AND source = 'openaq')
             ) THEN 'source does not match Kafka topic' END,
@@ -253,7 +253,7 @@ def validation_errors():
                 OR try_cast(data['value'] AS DOUBLE) IS NULL
                 OR try_cast(data['value'] AS DOUBLE) < 0
             ) THEN 'invalid OpenAQ measurement' END,
-            CASE WHEN source = 'esp32_pm_sensor' AND (
+            CASE WHEN source IN ('esp32_pm_sensor', 'iot_sensor_simulator') AND (
                 metadata['device_id'] IS NULL
                 OR NOT (
                     data['pm1'] IS NOT NULL

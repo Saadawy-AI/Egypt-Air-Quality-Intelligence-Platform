@@ -16,23 +16,24 @@ The live Kafka metadata inspection found:
 
 These are development settings, not production security or HA.
 
-## Gate 1 — Real ESP32 to PostgreSQL
+## Gate 1 — Virtual IoT telemetry to PostgreSQL
 
-Status: BLOCKED pending physical device connection and a real sensor transmission.
+Decision: a physical ESP32 is explicitly out of scope. The project will use an opt-in virtual IoT sensor fleet. This is valid for testing the IoT messaging and data platform, but simulated measurements must always remain labeled and must never be represented as real environmental observations.
 
-The Windows serial-port registry contained no serial-port mappings during this inspection. Python's pyserial module is also not installed in the host interpreter. This does not prove the board is defective; it means there is currently no observable COM-port path from which to flash or read the ESP32.
+Implemented:
+- Optional Compose profile `iot-simulator` with three virtual nodes (Cairo, Giza, Alexandria).
+- QoS 1 MQTT publication to `egypt/air-quality/simulated/...`.
+- Each message uses source `iot_sensor_simulator` and metadata `simulation=true`, `device_type=virtual_iot_sensor`, device ID, profile, and sequence.
+- MQTT bridge forwards to Kafka `air-quality`, keyed by virtual device ID.
+- Silver validation and deduplication accept the explicit simulator source.
+- Shared ingestion source registry accepts `iot_sensor_simulator`.
+- Unit tests and one-shot MQTT-to-Kafka transport test passed (see `IOT_SIMULATOR_DESIGN_AND_TEST_2026-11-24.md`).
 
-Acceptance procedure once the board is connected:
-1. Connect the ESP32 by a known data-capable USB cable; confirm a COM port and record VID/PID and firmware version.
-2. Confirm firmware publishes QoS 1 JSON to `egypt/air-quality/<device-id>`.
-3. Payload must contain a stable `device_id`, event timestamp, schema/version, and sensor measurements with units.
-4. Subscribe/read-only observe the device topic; capture the real MQTT message and timestamp. Do not inject fabricated data into the production topic.
-5. Verify bridge delivery to Kafka `air-quality`, including the device key.
-6. Verify Bronze offset/checkpoint and Parquet record; then verify Silver validation/quarantine outcome.
-7. Verify the resulting Gold batch ID and row count in `processed_gold_batches` and matching fact rows in PostgreSQL.
-8. Preserve a redacted evidence record (payload, device ID, timestamps, Kafka partition/offset, Bronze/Silver/Gold batch IDs, SQL counts). Never include Wi-Fi passwords or broker credentials.
+Acceptance status: MQTT-to-Kafka transport is verified for three virtual devices. The complete lineage for those exact records through Bronze, Silver, Gold, and PostgreSQL is still pending; do not mark this gate fully passed until batch IDs and row counts are reconciled in PostgreSQL. A physical ESP32/COM port is not required.
 
-Pass criteria: one real board-originated record is traceable through every stage with matching identity/timestamps and no unexplained row loss or duplication.
+Run one-shot: `docker compose --profile iot-simulator run --rm iot-simulator python -m ingestion.mqtt.simulator --once`
+Run continuously: `docker compose --profile iot-simulator up iot-simulator`
+Stop: `docker compose --profile iot-simulator stop iot-simulator`
 
 ## Gate 2 — Kafka TLS/SASL and ACLs
 
