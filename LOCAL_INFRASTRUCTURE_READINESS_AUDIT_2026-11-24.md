@@ -164,7 +164,7 @@ The initial test-status paragraph above records the state before the WSL virtual
 - Rewrote and force-pushed GitHub `main`, `fix/kafka-persistence`, and `master`. Removed `.env` / `.env.airflow-jwt` from reachable history and blanked credential-bearing environment assignments in all historical `.env.example` blobs. Verified 9 reachable commits, 0 private env paths, and 0 non-empty secret-like template assignments.
 - Removed the redundant `Egypt-Air-Quality-Intelligence-Platform-GitHub` copy after verifying its HEAD was identical to the primary repo's Kafka-persistence branch. Preserved its three useful pre-Gold source snapshots under `backups/legacy-pre-current-gold-20261121/`.
 - Removed 26 Python/test cache directories, the stale root audit output, and the one-off root OpenAQ smoke script. Untracked the Spark Ivy dependency cache from Git while leaving its local files available for Spark.
-- The latest clean Git history bundle is `backups/git-cleanup-preflight-20261124/all-refs-after-full-secret-scrub.bundle`. The old secret-bearing Git metadata and intermediate bundle were removed after successful remote verification.
+- The latest clean Git history bundle is `backups/git-history-cleanup-20261124/all-refs-after-full-secret-scrub.bundle`. The old secret-bearing Git metadata and intermediate bundle were removed after successful remote verification.
 - Source changes remain uncommitted pending final review, regression tests, and stage/commit.
 
 

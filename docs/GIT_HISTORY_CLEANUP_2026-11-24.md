@@ -19,7 +19,7 @@ Post-rewrite verification against all reachable history:
 - Reachable commits scanned: 9.
 - Non-empty secret-like assignments in historical `.env.example`: 0.
 - Reachable `.env` / `.env.airflow-jwt` paths: 0.
-- A sanitized Git bundle was created and verified at `backups/git-cleanup-preflight-20261124/all-refs-after-full-secret-scrub.bundle`.
+- A sanitized Git bundle was created and verified at `backups/git-history-cleanup-20261124/all-refs-after-full-secret-scrub.bundle`.
 - The pre-rewrite Git bundle and superseded local Git metadata were deleted after the remote rewrite was verified; no plaintext pre-rewrite Git backup remains in the project.
 
 The old Gitleaks JSON report remains as redacted pre-cleanup evidence only. It is not the current scan result. A standalone Gitleaks binary was not available for a post-rewrite rerun; the verification above directly inspected reachable Git objects and all historical environment-template assignments.
@@ -38,7 +38,7 @@ Removed `D:\Projects\egypt_air_quality\Egypt-Air-Quality-Intelligence-Platform-G
 - Removed 26 Python/test cache directories (`__pycache__`, `.pytest_cache`, etc.).
 - Removed tracked `data/ivy2` cache files from the Git index while retaining the local cache directory for running Spark. The path is ignored by `.gitignore`.
 - Existing backups, production Parquet data, checkpoints, Docker volumes, and model artifacts were not deleted.
-- The original working tree changes were preserved in a patch and an archive of 55 untracked files under `backups/git-cleanup-preflight-20261124/`; the patch excludes ignored secret files.
+- A temporary pre-commit patch and archive of 55 untracked files were used to protect the working tree, then deleted after the changes were committed and pushed. The sanitized Git bundle remains.
 
 ## OpenAQ credential verification
 
