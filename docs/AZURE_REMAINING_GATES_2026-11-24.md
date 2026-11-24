@@ -93,11 +93,12 @@ Safety constraints:
 
 ## Immediate next actions
 
-1. Connect the actual ESP32 and provide its firmware/project or confirm the COM port appears; then run Gate 1 with a real message.
-2. Choose the target Azure Kafka model (managed Kafka-compatible service vs self-managed KRaft) before implementing Gate 2/3. The security and HA topology must be designed together.
-3. Implement client authentication/ACLs and migrate consumers/producers as one tested change.
-4. Provision multi-broker HA and migrate topics with verified replication.
-5. Execute the isolated and then maintenance-window fault/replay matrix.
+1. Complete the exact virtual IoT record lineage from MQTT/Kafka through Bronze, Silver, Gold, and PostgreSQL; reconcile simulator device IDs, source labels, batch IDs, and row counts. Physical ESP32/COM hardware is out of scope.
+2. Adopt Azure Event Hubs Premium with Kafka endpoint as the preferred managed Kafka-compatible target for the initial Azure deployment, subject to subscription/region/throughput and cost validation. Use private networking and TLS/SASL_SSL with the Event Hubs connection-string mechanism; authorize through narrowly scoped Event Hubs authorization rules or Azure RBAC where supported. Do not assume Kafka SCRAM users/ACL semantics map one-to-one to Event Hubs.
+3. Keep local single-node Kafka explicitly development-only. If self-managed Kafka is selected instead of Event Hubs, implement TLS/SASL and ACLs together with a three-controller/three-broker KRaft topology, RF=3, min ISR=2, and verified migration; never fake HA by changing RF on one broker.
+4. Migrate producer/consumer clients to the selected Azure endpoint and test authenticated positive/negative access, secret rotation/revocation, private connectivity, and offset/batch reconciliation.
+5. Execute the isolated bridge/worker/PostgreSQL fault and bounded-replay matrix locally; perform broker failover tests only on the future multi-node target, never by killing the sole local broker.
+6. Run a production-like Azure soak, validate backup/restore and disaster recovery, then complete the deployment/security/cost sign-off.
 
 ## Current decision
 
