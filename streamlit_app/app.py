@@ -62,6 +62,77 @@ st.set_page_config(
 st.title("Analysis Dashboard")
 st.caption("Operational air-quality analytics from OpenAQ and Open-Meteo. Use the sidebar to switch to the Machine Learning dashboard.")
 
+# Source lifecycle controls are deliberately separate from the analytics view.
+# Only optional simulator services are controllable; API ingestion stays always-on.
+import json
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+CONTROL_API_URL = os.getenv("CONTROL_API_URL", "").rstrip("/")
+CONTROL_API_TOKEN = os.getenv("CONTROL_API_TOKEN", "")
+
+def control_api_request(path, method="GET"):
+    if not CONTROL_API_URL or not CONTROL_API_TOKEN:
+        raise RuntimeError("Source Control API is not configured.")
+    request = Request(
+        CONTROL_API_URL + path,
+        method=method,
+        headers={"Authorization": f"Bearer {CONTROL_API_TOKEN}"},
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            return json.loads(response.read() or b"{}")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        raise RuntimeError(f"Control API returned HTTP {exc.code}: {detail[:250]}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Control API is unavailable: {exc.reason}") from exc
+
+with st.expander("IoT Sources Control", expanded=False):
+    st.caption("OpenAQ and Open-Meteo sources are always on and cannot be stopped here.")
+    st.dataframe(
+        pd.DataFrame([
+            {"Source": "OpenAQ", "Mode": "Always On", "Control": "Locked On"},
+            {"Source": "Open-Meteo Air Quality", "Mode": "Always On", "Control": "Locked On"},
+            {"Source": "Open-Meteo Weather", "Mode": "Always On", "Control": "Locked On"},
+        ]),
+        hide_index=True,
+        width="stretch",
+    )
+    try:
+        source_state = control_api_request("/v1/sources").get("sources", {})
+        for source_id, label in (
+            ("python_iot", "Python IoT Simulator"),
+            ("wokwi", "Wokwi ESP32"),
+        ):
+            state = source_state.get(source_id, {})
+            running = bool(state.get("running"))
+            status_text = state.get("state", "unknown")
+            st.write(f"**{label}** — {status_text}")
+            if source_id == "wokwi" and state.get("topic_prefix"):
+                st.caption("Copy this topic prefix into TOPIC_PREFIX in the Wokwi sketch:")
+                st.code(state["topic_prefix"])
+            if status_text == "not_deployed":
+                st.info(f"{label} has not been provisioned as a controllable service yet.")
+                continue
+            col_start, col_stop = st.columns(2)
+            if col_start.button(f"Start {label}", key=f"{source_id}_start", disabled=running):
+                try:
+                    control_api_request(f"/v1/sources/{source_id}/start", method="POST")
+                    st.success(f"{label} start confirmed.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+            if col_stop.button(f"Stop {label}", key=f"{source_id}_stop", disabled=not running):
+                try:
+                    control_api_request(f"/v1/sources/{source_id}/stop", method="POST")
+                    st.success(f"{label} stop confirmed.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+    except Exception as exc:
+        st.warning(f"Optional-source controls are currently unavailable: {exc}")
+
 gold_data_dir = Path(
     os.getenv("GOLD_DATA_DIR", "/opt/project-data/gold/hourly_measurements_v4")
 )

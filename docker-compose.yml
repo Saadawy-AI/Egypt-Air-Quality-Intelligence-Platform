@@ -283,6 +283,28 @@ services:
         condition: service_started
     restart: "no"
 
+  # Optional Wokwi ESP32 ingress; independent lifecycle from the core MQTT/Kafka bridge.
+  wokwi-mqtt-bridge:
+    profiles: ["wokwi"]
+    build:
+      context: .
+      dockerfile: ingestion/mqtt/Dockerfile
+    command: ["python", "-m", "ingestion.mqtt.wokwi_bridge"]
+    environment:
+      MQTT_HOST: mqtt
+      MQTT_PORT: "1883"
+      WOKWI_MQTT_HOST: ${WOKWI_MQTT_HOST:-broker.hivemq.com}
+      WOKWI_MQTT_PORT: ${WOKWI_MQTT_PORT:-1883}
+      WOKWI_TOPIC_PREFIX: ${WOKWI_TOPIC_PREFIX:?Set WOKWI_TOPIC_PREFIX in the ignored .env}
+      WOKWI_GOVERNORATE: ${WOKWI_GOVERNORATE:-Cairo}
+      WOKWI_GOVERNORATE_AR: ${WOKWI_GOVERNORATE_AR:-القاهرة}
+      WOKWI_LATITUDE: ${WOKWI_LATITUDE:-30.0444}
+      WOKWI_LONGITUDE: ${WOKWI_LONGITUDE:-31.2357}
+    depends_on:
+      mqtt:
+        condition: service_started
+    restart: "no"
+
   spark-master:
     image: apache/spark:3.5.7
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master", "--host", "spark-master", "--port", "7077", "--webui-port", "8080"]
@@ -494,6 +516,36 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  # Filtered Docker API access for the narrowly allowlisted source controller.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.3.0
+    environment:
+      CONTAINERS: "1"
+      POST: "1"
+      PING: "1"
+      VERSION: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - socket-control
+    restart: unless-stopped
+
+  source-control-api:
+    build:
+      context: ./control_api
+    environment:
+      CONTROL_API_TOKEN: ${CONTROL_API_TOKEN:?Set CONTROL_API_TOKEN in the ignored .env file}
+      DOCKER_API_URL: http://docker-socket-proxy:2375
+      COMPOSE_PROJECT_NAME: egypt-air-quality
+      WOKWI_TOPIC_PREFIX: ${WOKWI_TOPIC_PREFIX:?Set WOKWI_TOPIC_PREFIX in the ignored .env}
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started
+    networks:
+      - control-plane
+      - socket-control
+    restart: unless-stopped
+
   streamlit:
     build:
       context: ./streamlit_app
@@ -508,6 +560,8 @@ services:
       PGUSER: airquality
       PGPASSWORD: ${APP_DB_PASSWORD}
       ML_METADATA_PATH: /opt/project-models/pm25/pm25_hgb_v2.json
+      CONTROL_API_URL: http://source-control-api:8088
+      CONTROL_API_TOKEN: ${CONTROL_API_TOKEN:?Set CONTROL_API_TOKEN in the ignored .env file}
     volumes:
       - ./data:/opt/project-data:ro
       - ./models:/opt/project-models:ro
@@ -520,6 +574,7 @@ services:
     networks:
       default: {}
       postgres-private: {}
+      control-plane: {}
 
 volumes:
   postgres_data:
@@ -528,6 +583,10 @@ volumes:
   mosquitto_log:
 
 networks:
+  control-plane:
+    internal: true
+  socket-control:
+    internal: true
   postgres-private:
     driver: bridge
     ipam:

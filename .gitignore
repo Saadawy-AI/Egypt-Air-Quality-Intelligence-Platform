@@ -30,3 +30,6 @@ htmlcov/
 .tox/
 .mypy_cache/
 .ruff_cache/
+
+# PlatformIO build outputs
+.pio/

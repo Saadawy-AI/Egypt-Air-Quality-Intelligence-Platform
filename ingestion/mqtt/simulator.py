@@ -12,8 +12,20 @@ import random
 import signal
 import time
 from datetime import datetime, timezone
+from threading import Event
 
 import paho.mqtt.client as mqtt
+
+STOP_EVENT = Event()
+
+
+def request_shutdown(signum, frame):
+    logger.info("Shutdown signal received | signal=%s", signum)
+    STOP_EVENT.set()
+
+
+signal.signal(signal.SIGTERM, request_shutdown)
+signal.signal(signal.SIGINT, request_shutdown)
 
 
 logging.basicConfig(
@@ -116,12 +128,12 @@ def main():
     sequence = 0
     total = 0
     try:
-        while True:
+        while not STOP_EVENT.is_set():
             sequence += 1
             total += publish_once(client, rng, sequence)
             if args.once:
                 break
-            time.sleep(INTERVAL_SECONDS)
+            STOP_EVENT.wait(INTERVAL_SECONDS)
     except KeyboardInterrupt:
         logger.info("Simulator stopped by operator.")
     finally:
