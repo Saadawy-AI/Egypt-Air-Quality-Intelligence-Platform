@@ -13,6 +13,12 @@ failure and does not stop core ingestion or processing services.
 Streamlit -> internal Control API -> filtered Docker Socket Proxy -> one
 pre-created Compose container from a fixed allowlist.
 
+The dashboard also exposes a dedicated **IoT System Power** master control.
+Turn ON starts the Python IoT Simulator and Wokwi MQTT bridge; Turn OFF stops
+only those two optional services. Individual per-source controls remain
+available. Neither master nor individual IoT controls can stop or restart
+OpenAQ, Open-Meteo, Airflow, Kafka, Spark, MQTT, or PostgreSQL.
+
 The Control API is attached only to private Compose networks and has no host
 port. Streamlit is connected to the private control network. The proxy exposes
 container inspection and POST operations only; the API does not create

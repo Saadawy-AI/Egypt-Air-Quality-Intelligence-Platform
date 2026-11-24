@@ -88,6 +88,73 @@ def control_api_request(path, method="GET"):
     except URLError as exc:
         raise RuntimeError(f"Control API is unavailable: {exc.reason}") from exc
 
+# Dedicated master switch for the optional IoT runtime only.
+# Core API ingestion, Kafka, Spark, Airflow and PostgreSQL are never touched.
+with st.expander("IoT System Power", expanded=True):
+    st.caption(
+        "Start or stop the optional IoT layer independently. This affects only "
+        "the Python simulator and Wokwi MQTT bridge; core ingestion and analytics stay online."
+    )
+    try:
+        iot_sources = control_api_request("/v1/sources").get("sources", {})
+        iot_ids = ("python_iot", "wokwi")
+        iot_states = {key: iot_sources.get(key, {}) for key in iot_ids}
+        iot_running = {
+            key: bool(value.get("running"))
+            for key, value in iot_states.items()
+        }
+        running_count = sum(iot_running.values())
+        if running_count == len(iot_ids):
+            st.success("IoT layer: ON — both optional services are running.")
+        elif running_count == 0:
+            st.info("IoT layer: OFF — both optional services are stopped.")
+        else:
+            st.warning("IoT layer: PARTIAL — only one optional service is running.")
+        power_on, power_off = st.columns(2)
+        if power_on.button(
+            "Turn ON IoT",
+            key="iot_master_start",
+            type="primary",
+            disabled=all(iot_running.values()),
+            use_container_width=True,
+        ):
+            errors = []
+            for source_id in iot_ids:
+                state = iot_states[source_id]
+                if state.get("state") == "not_deployed":
+                    errors.append(f"{source_id}: not deployed")
+                    continue
+                if not iot_running[source_id]:
+                    try:
+                        control_api_request(f"/v1/sources/{source_id}/start", method="POST")
+                    except Exception as exc:
+                        errors.append(f"{source_id}: {exc}")
+            if errors:
+                st.error("IoT start was partial: " + " | ".join(errors))
+            else:
+                st.success("IoT start requested for all optional services.")
+            st.rerun()
+        if power_off.button(
+            "Turn OFF IoT",
+            key="iot_master_stop",
+            disabled=not any(iot_running.values()),
+            use_container_width=True,
+        ):
+            errors = []
+            for source_id in reversed(iot_ids):
+                if iot_running[source_id]:
+                    try:
+                        control_api_request(f"/v1/sources/{source_id}/stop", method="POST")
+                    except Exception as exc:
+                        errors.append(f"{source_id}: {exc}")
+            if errors:
+                st.error("IoT stop was partial: " + " | ".join(errors))
+            else:
+                st.success("IoT stop requested for all optional services.")
+            st.rerun()
+    except Exception as exc:
+        st.warning(f"IoT master control is unavailable: {exc}")
+
 with st.expander("IoT Sources Control", expanded=False):
     st.caption("OpenAQ and Open-Meteo sources are always on and cannot be stopped here.")
     st.dataframe(
