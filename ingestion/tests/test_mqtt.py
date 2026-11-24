@@ -122,12 +122,14 @@ def test_mqtt_bridge_subscribes_and_forwards_with_device_key():
         "data": {"pm25": "12.5"},
     })
     bridge.on_message(client, None, FakeMessage(payload.encode()))
+    assert bridge.wait_for_idle()
 
     assert client.subscriptions == [("egypt/air-quality/#", 1)]
     assert producer.messages == [
         ("air-quality", b"device-01", payload.encode())
     ]
     assert client.acks == [(17, 1)]
+    bridge.stop_publisher()
 
 
 def test_mqtt_bridge_forwards_invalid_json_for_silver_quarantine():
@@ -137,11 +139,13 @@ def test_mqtt_bridge_forwards_invalid_json_for_silver_quarantine():
 
     payload = b"{not-json"
     bridge.on_message(client, None, FakeMessage(payload))
+    assert bridge.wait_for_idle()
 
     assert producer.messages == [
         ("air-quality", None, payload)
     ]
     assert client.acks == [(17, 1)]
+    bridge.stop_publisher()
 
 
 def test_mqtt_bridge_forwards_non_object_json_for_silver_quarantine():
@@ -151,11 +155,13 @@ def test_mqtt_bridge_forwards_non_object_json_for_silver_quarantine():
 
     payload = b"[]"
     bridge.on_message(client, None, FakeMessage(payload))
+    assert bridge.wait_for_idle()
 
     assert producer.messages == [
         ("air-quality", None, payload)
     ]
     assert client.acks == [(17, 1)]
+    bridge.stop_publisher()
 
 
 def test_mqtt_bridge_does_not_ack_when_kafka_publish_fails():
@@ -168,6 +174,26 @@ def test_mqtt_bridge_does_not_ack_when_kafka_publish_fails():
         None,
         FakeMessage(b'{"metadata":{"device_id":"device-01"}}'),
     )
+    assert bridge.wait_for_idle()
 
     assert client.acks == []
     assert client.disconnected
+    bridge.stop_publisher()
+
+
+def test_mqtt_bridge_disconnects_without_ack_when_publish_queue_is_full(monkeypatch):
+    monkeypatch.setenv("MQTT_PUBLISH_QUEUE_SIZE", "1")
+    producer = FakeProducer()
+    client = FakeMQTTClient()
+    bridge = MQTTKafkaBridge(producer=producer, mqtt_client=client)
+    bridge.stop_publisher()
+
+    bridge.on_message(client, None, FakeMessage(b'{"first":true}'))
+    second = FakeMessage(b'{"second":true}')
+    second.mid = 18
+    bridge.on_message(client, None, second)
+
+    assert client.disconnected
+    assert client.acks == []
+    assert producer.messages == []
+    bridge._discard_queued_messages()

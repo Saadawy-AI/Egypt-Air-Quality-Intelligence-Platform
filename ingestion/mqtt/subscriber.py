@@ -1,6 +1,9 @@
 import json
 import logging
 import os
+from queue import Empty, Full, Queue
+from threading import Event, Thread
+import time
 
 import paho.mqtt.client as mqtt
 from kafka import KafkaProducer
@@ -51,6 +54,16 @@ class MQTTKafkaBridge:
         self.client.on_disconnect = self.on_disconnect
         self.client.on_message = self.on_message
 
+        queue_size = max(1, int(os.getenv("MQTT_PUBLISH_QUEUE_SIZE", "500")))
+        self._publish_queue = Queue(maxsize=queue_size)
+        self._stop_worker = Event()
+        self._publisher_thread = Thread(
+            target=self._publish_loop,
+            name="mqtt-kafka-publisher",
+            daemon=True,
+        )
+        self._publisher_thread.start()
+
     @staticmethod
     def extract_device_id(payload):
         try:
@@ -97,46 +110,104 @@ class MQTTKafkaBridge:
             logger.info("MQTT bridge disconnected.")
 
     def on_message(self, client, userdata, message):
+        # Keep Paho's network-loop callback non-blocking. Kafka I/O and its
+        # delivery wait happen on the dedicated publisher thread below.
         payload = message.payload.decode("utf-8", errors="replace")
         device_id = self.extract_device_id(payload)
         key = device_id.encode("utf-8") if device_id else None
 
         try:
-            self.producer.send(
-                self.kafka_topic,
-                key=key,
-                value=payload.encode("utf-8"),
-            ).get(timeout=15)
-        except Exception:
-            # With manual MQTT acknowledgements, the broker can redeliver this
-            # QoS 1 message after reconnect instead of losing it on Kafka error.
-            logger.exception(
-                "Kafka publish failed; leaving MQTT message unacknowledged | "
-                "mqtt_topic=%s | message_id=%s",
+            self._publish_queue.put_nowait(
+                (
+                    client,
+                    message.topic,
+                    message.mid,
+                    message.qos,
+                    key,
+                    payload.encode("utf-8"),
+                    device_id,
+                )
+            )
+        except Full:
+            # Never acknowledge a message we could not enqueue. Disconnecting
+            # makes the QoS 1 broker redeliver it after the queue drains.
+            logger.error(
+                "MQTT publish queue is full; leaving message unacknowledged "
+                "| mqtt_topic=%s | message_id=%s",
                 message.topic,
                 message.mid,
             )
             client.disconnect()
-            return
 
-        if message.qos > 0:
-            result = client.ack(message.mid, message.qos)
-            if result != mqtt.MQTT_ERR_SUCCESS:
-                logger.error(
-                    "MQTT acknowledgement failed | message_id=%s | rc=%s",
-                    message.mid,
-                    result,
+    def _publish_loop(self):
+        while not self._stop_worker.is_set():
+            try:
+                item = self._publish_queue.get(timeout=0.25)
+            except Empty:
+                continue
+
+            client, mqtt_topic, message_id, qos, key, payload, device_id = item
+            try:
+                self.producer.send(
+                    self.kafka_topic,
+                    key=key,
+                    value=payload,
+                ).get(timeout=15)
+            except Exception:
+                # Do not ACK on failure. Drain queued (also unacknowledged)
+                # messages so broker redelivery remains the source of truth.
+                logger.exception(
+                    "Kafka publish failed; leaving MQTT message unacknowledged "
+                    "| mqtt_topic=%s | message_id=%s",
+                    mqtt_topic,
+                    message_id,
                 )
                 client.disconnect()
-                return
+                self._discard_queued_messages()
+                self._publish_queue.task_done()
+                continue
 
-        logger.info(
-            "Forwarded MQTT measurement to Kafka | mqtt_topic=%s | "
-            "kafka_topic=%s | device_id=%s",
-            message.topic,
-            self.kafka_topic,
-            device_id or "unknown",
-        )
+            if qos > 0:
+                result = client.ack(message_id, qos)
+                if result != mqtt.MQTT_ERR_SUCCESS:
+                    logger.error(
+                        "MQTT acknowledgement failed | message_id=%s | rc=%s",
+                        message_id,
+                        result,
+                    )
+                    client.disconnect()
+                    self._publish_queue.task_done()
+                    continue
+
+            logger.info(
+                "Forwarded MQTT measurement to Kafka | mqtt_topic=%s | "
+                "kafka_topic=%s | device_id=%s",
+                mqtt_topic,
+                self.kafka_topic,
+                device_id or "unknown",
+            )
+            self._publish_queue.task_done()
+
+    def _discard_queued_messages(self):
+        while True:
+            try:
+                self._publish_queue.get_nowait()
+            except Empty:
+                return
+            else:
+                self._publish_queue.task_done()
+
+    def wait_for_idle(self, timeout=5):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._publish_queue.unfinished_tasks == 0:
+                return True
+            time.sleep(0.01)
+        return self._publish_queue.unfinished_tasks == 0
+
+    def stop_publisher(self, timeout=16):
+        self._stop_worker.set()
+        self._publisher_thread.join(timeout=timeout)
 
     def run(self):
         host = os.getenv("MQTT_HOST", "mqtt")
@@ -154,10 +225,15 @@ class MQTTKafkaBridge:
             self.close()
 
     def close(self):
+        self.stop_publisher()
         try:
-            self.producer.flush(timeout=15)
+            flush = getattr(self.producer, "flush", None)
+            if flush:
+                flush(timeout=15)
         finally:
-            self.producer.close(timeout=15)
+            close = getattr(self.producer, "close", None)
+            if close:
+                close(timeout=15)
 
 
 def main():
