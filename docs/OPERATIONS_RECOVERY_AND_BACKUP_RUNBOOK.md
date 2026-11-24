@@ -128,3 +128,13 @@ Still open:
 - Telegram delivery configuration and end-to-end notification test (optional if Telegram is not a requirement).
 - Production Kafka TLS/SASL, ACLs, multi-broker RF=3/min ISR=2 and Azure private networking/identity.
 - Final Azure readiness approval remains withheld.
+
+
+## Final project-file commit — 2026-11-24 20:05 UTC
+- Consolidated the reviewed source, tests, documentation, and file-cleanup changes in commit `288ef5f` (`Finalize local platform integration and workspace hygiene`).
+- Pushed `288ef5f` successfully to GitHub `origin/main`.
+- Regression tests after cleanup: `153 passed in 25.68s`.
+- `docker compose config -q`, `git diff --check`, and staged-file secret-assignment scan passed (0 non-placeholder secret assignments).
+- CAPMAS reference GeoJSON parsed successfully as a FeatureCollection with 27 features.
+- Working tree is clean and tracks `origin/main`.
+- Refreshed the sanitized Git bundle after this commit; it verifies successfully and still contains 0 reachable private environment paths.

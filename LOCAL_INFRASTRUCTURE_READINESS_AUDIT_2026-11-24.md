@@ -166,3 +166,13 @@ The initial test-status paragraph above records the state before the WSL virtual
 - Removed 26 Python/test cache directories, the stale root audit output, and the one-off root OpenAQ smoke script. Untracked the Spark Ivy dependency cache from Git while leaving its local files available for Spark.
 - The latest clean Git history bundle is `backups/git-cleanup-preflight-20261124/all-refs-after-full-secret-scrub.bundle`. The old secret-bearing Git metadata and intermediate bundle were removed after successful remote verification.
 - Source changes remain uncommitted pending final review, regression tests, and stage/commit.
+
+
+## Final project-file commit — 2026-11-24 20:05 UTC
+- Consolidated the reviewed source, tests, documentation, and file-cleanup changes in commit `288ef5f` (`Finalize local platform integration and workspace hygiene`).
+- Pushed `288ef5f` successfully to GitHub `origin/main`.
+- Regression tests after cleanup: `153 passed in 25.68s`.
+- `docker compose config -q`, `git diff --check`, and staged-file secret-assignment scan passed (0 non-placeholder secret assignments).
+- CAPMAS reference GeoJSON parsed successfully as a FeatureCollection with 27 features.
+- Working tree is clean and tracks `origin/main`.
+- Refreshed the sanitized Git bundle after this commit; it verifies successfully and still contains 0 reachable private environment paths.

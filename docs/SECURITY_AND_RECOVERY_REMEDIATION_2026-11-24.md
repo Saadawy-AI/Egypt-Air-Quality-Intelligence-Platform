@@ -111,3 +111,13 @@ The earlier credential/R2/Git statements above are historical and are superseded
 - Local Git status and file cleanup are in progress; the source changes have not yet been committed as a new project release.
 - The last verified data-plane state was 92,765 PostgreSQL fact rows and 27 processed Gold batches, with 153 Python tests passing. Re-run tests after the final file cleanup before committing.
 - Remaining release risks: host/WSL memory pressure and sustained soak/fault-injection testing; real MQTT sensor payload validation; Telegram is unconfigured; Kafka remains single-broker RF=1/PLAINTEXT and is development-only. Azure production is not approved yet.
+
+
+## Final project-file commit — 2026-11-24 20:05 UTC
+- Consolidated the reviewed source, tests, documentation, and file-cleanup changes in commit `288ef5f` (`Finalize local platform integration and workspace hygiene`).
+- Pushed `288ef5f` successfully to GitHub `origin/main`.
+- Regression tests after cleanup: `153 passed in 25.68s`.
+- `docker compose config -q`, `git diff --check`, and staged-file secret-assignment scan passed (0 non-placeholder secret assignments).
+- CAPMAS reference GeoJSON parsed successfully as a FeatureCollection with 27 features.
+- Working tree is clean and tracks `origin/main`.
+- Refreshed the sanitized Git bundle after this commit; it verifies successfully and still contains 0 reachable private environment paths.
