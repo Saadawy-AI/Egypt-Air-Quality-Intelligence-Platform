@@ -2,34 +2,41 @@
 .env.*
 !.env.example
 
+# Python environments, bytecode and test tooling
+.venv/
+venv/
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+htmlcov/
+
+# Runtime logs and generated data
 logs/
+airflow/logs/
+data/logs/
 data/bronze/
 data/silver/
 data/quarantine/
 data/gold/
 data/checkpoints/
 data/staging/
-models/
 data/ivy2/
+spark/checkpoints/
+models/
+*.log
 
-.venv/
-pycache/
-*.py[cod]
-.pytest_cache/
-
-# Local database and recovery backups contain project data; never commit them.
+# Local databases, recovery archives and temporary test artifacts
 /backups/
+data/_permission_test/
 
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
 
-# Local audit/test artifacts
-PROJECT_AUDIT_REPORT.txt
-.coverage
-htmlcov/
-.tox/
-.mypy_cache/
-.ruff_cache/
-
-# PlatformIO build outputs
+# Platform build outputs
 .pio/
