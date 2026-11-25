@@ -1,3 +1,4 @@
+import gzip
 import json
 import logging
 import os
@@ -23,7 +24,7 @@ SCHEMA_PATH = Path(os.getenv("POSTGRES_SCHEMA_PATH", "/app/schema.sql"))
 POLL_SECONDS = max(10, int(os.getenv("POLL_SECONDS", "60")))
 GOVERNORATE_GEOJSON = Path(os.getenv(
     "GOVERNORATE_GEOJSON",
-    "/opt/project-data/reference/egypt_governorates_capmas.geojson",
+    "/opt/project-data/reference/egypt_governorates_capmas.geojson.gz",
 ))
 
 
@@ -51,7 +52,9 @@ def load_governorate_polygons(path=GOVERNORATE_GEOJSON):
     if not path.is_file():
         logger.warning("CAPMAS governorate boundaries not found; unknown locations remain Unknown | path=%s", path)
         return []
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt", encoding="utf-8") as source:
+        payload = json.load(source)
     polygons = []
     aliases = {"North Sinia": "North Sinai", "South Sinia": "South Sinai"}
     for feature in payload.get("features", []):

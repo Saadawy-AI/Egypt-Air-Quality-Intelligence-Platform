@@ -28,7 +28,7 @@ The same variable names are documented in `.env.example`. The real `.env` is ign
 From the project root in WSL:
 
 ```bash
-.venv/bin/pip install -r requirements-r2.txt
+.venv/bin/pip install -r scripts/requirements-r2.txt
 ```
 
 ## Upload and verify

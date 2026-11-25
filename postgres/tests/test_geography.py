@@ -2,7 +2,7 @@ from pathlib import Path
 
 from postgres.gold_loader import effective_governorate, load_governorate_polygons, resolve_governorate
 
-BOUNDARIES = Path(__file__).resolve().parents[2] / "data" / "reference" / "egypt_governorates_capmas.geojson"
+BOUNDARIES = Path(__file__).resolve().parents[2] / "data" / "reference" / "egypt_governorates_capmas.geojson.gz"
 
 
 def test_capmas_boundaries_contain_all_27_governorates():
