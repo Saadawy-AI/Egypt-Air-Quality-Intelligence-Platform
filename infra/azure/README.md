@@ -54,3 +54,12 @@ IaC templates are intentionally not marked deployable until network topology,
 region, SKU/throughput sizing, availability requirements and budget are
 approved. The current workstation has no Azure CLI installed, so local
 subscription validation and Bicep compilation are not presently available.
+
+
+## Initial non-production template (not deployed)
+
+The initial parameterized foundation is now available in main.bicep. It provides optional ADLS Gen2, Event Hubs Standard, and Log Analytics resources. All three deployment switches default to false, so a normal template invocation creates no billable resources unless explicitly enabled. This deliberately small compatibility-spike baseline is not the final production architecture; the preferred Premium Event Hubs target and private-network design remain subject to sizing, compatibility, region availability, and budget review.
+
+The project owner selected UAE North. Azure CLI and Bicep are not installed on the connected Windows workstation as of the latest check. The owner reports $190 credit for one month and team-member credits of $100 for one year; these are credits, not an agreed recurring monthly spend cap. Subscription and tenant identifiers have not yet been supplied/verified.
+
+See main.parameters.example.json for safe non-secret example parameters. Do not deploy until the resource group, subscription, tenant, credit ownership/expiry, cost alerts, quota and service availability are confirmed.
