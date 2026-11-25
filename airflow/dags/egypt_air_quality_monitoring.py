@@ -1,12 +1,14 @@
-"""Five-minute operational monitoring for Kafka, Spark and PostgreSQL."""
+"""Five-minute operational monitoring for MQTT, Kafka, Spark and PostgreSQL."""
 import json
 import os
+import threading
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
 import psycopg
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
+import paho.mqtt.client as mqtt
 
 
 def send_failure_alert(context):
@@ -38,6 +40,48 @@ def db():
         dbname=os.environ["PGDATABASE"], user=os.environ["PGUSER"],
         password=os.environ["PGPASSWORD"], connect_timeout=8,
     )
+
+
+def check_mqtt_ingress():
+    received = threading.Event()
+    state = {"connected_clients": None}
+
+    def on_connect(client, userdata, flags, reason_code, properties):
+        if getattr(reason_code, "is_failure", False):
+            return
+        client.subscribe("$SYS/broker/clients/connected", qos=0)
+
+    def on_message(client, userdata, message):
+        if message.topic == "$SYS/broker/clients/connected":
+            try:
+                state["connected_clients"] = int(message.payload.decode("utf-8").strip())
+                received.set()
+            except (TypeError, ValueError):
+                return
+
+    client = mqtt.Client(
+        mqtt.CallbackAPIVersion.VERSION2,
+        client_id="airflow-iot-ingress-health",
+        protocol=mqtt.MQTTv311,
+    )
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(os.getenv("MQTT_HOST", "mqtt"), int(os.getenv("MQTT_PORT", "1883")), keepalive=15)
+    client.loop_start()
+    try:
+        if not received.wait(timeout=15):
+            raise TimeoutError("Mosquitto did not publish its $SYS connected-client metric.")
+    finally:
+        client.disconnect()
+        client.loop_stop()
+
+    # Mosquitto may deliver the retained $SYS snapshot from before this probe
+    # connected. The core MQTT-to-Kafka bridge must account for at least one client.
+    if state["connected_clients"] is None or state["connected_clients"] < 1:
+        raise RuntimeError(
+            f"MQTT broker reports {state['connected_clients']} connected clients; expected the bridge."
+        )
+    return {"mqtt": "healthy", "connected_clients": state["connected_clients"], "bridge_presence": "inferred"}
 
 
 def check_kafka():
@@ -103,9 +147,10 @@ with DAG(
         "execution_timeout": timedelta(minutes=2),
         "on_failure_callback": send_failure_alert,
     },
-    tags=["monitoring", "kafka", "spark", "postgres"],
+    tags=["monitoring", "mqtt", "kafka", "spark", "postgres"],
 ) as dag:
+    mqtt_ingress = PythonOperator(task_id="check_mqtt_to_kafka_bridge", python_callable=check_mqtt_ingress)
     kafka = PythonOperator(task_id="check_kafka_topics", python_callable=check_kafka)
     spark = PythonOperator(task_id="check_spark_workers", python_callable=check_spark)
     postgres = PythonOperator(task_id="check_postgres_freshness", python_callable=check_postgres_and_freshness)
-    [kafka, spark, postgres]
+    [mqtt_ingress, kafka, spark, postgres]
