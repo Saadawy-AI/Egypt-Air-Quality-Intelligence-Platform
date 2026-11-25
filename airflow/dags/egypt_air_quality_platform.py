@@ -71,12 +71,20 @@ def preflight():
     with urllib.request.urlopen("http://spark-master:8080/json/", timeout=10) as response:
         spark = json.loads(response.read().decode("utf-8"))
     alive_workers = int(spark.get("aliveworkers", 0))
+    active_apps = spark.get("activeapps", [])
     if alive_workers < 1:
         raise RuntimeError("Spark master reports no alive workers.")
+    if len(active_apps) < 3:
+        raise RuntimeError(f"Expected active Bronze/Silver/Gold Spark applications; found {len(active_apps)}.")
 
     with db() as conn:
         conn.execute("SELECT 1").fetchone()
-    return {"kafka_topics": sorted(required_topics), "spark_alive_workers": alive_workers, "postgres": "healthy"}
+    return {
+        "kafka_topics": sorted(required_topics),
+        "spark_alive_workers": alive_workers,
+        "spark_active_apps": len(active_apps),
+        "postgres": "healthy",
+    }
 
 
 def ingest_sources():

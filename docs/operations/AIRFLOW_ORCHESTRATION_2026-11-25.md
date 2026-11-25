@@ -12,7 +12,7 @@ Airflow coordinates scheduled and operational work. It does not replace Kafka, S
 | DAG ID | Schedule (UTC) | Responsibility |
 |---|---|---|
 | `egypt_air_quality_platform` | Hourly at minute 15 | Main end-to-end control flow: preflight, API ingestion, fresh Bronze/Silver outputs, committed Gold batch, quality checks, PostgreSQL batch/row-count reconciliation, platform health. |
-| `egypt_air_quality_monitoring` | Every 5 minutes | Kafka required-topic availability, Spark worker health, PostgreSQL fact/batch availability and loader freshness. |
+| `egypt_air_quality_monitoring` | Every 5 minutes | Kafka required-topic availability, at least one live Spark worker plus the three active Bronze/Silver/Gold applications, PostgreSQL fact/batch availability and loader freshness. |
 | `egypt_air_quality_ml` | Sunday 03:00 | Train PM2.5 candidate, evaluate against naive persistence baseline, register as qualified or rejected candidate. No automatic production promotion. |
 | `egypt_air_quality_backup` | Daily 02:00 | Create PostgreSQL custom-format dumps for the application and Airflow metadata databases, archive active/candidate model artifacts, upload recent artifacts to R2, then verify remote bytes with SHA-256. |
 | `egypt_air_quality_ingestion` | Manual only | Standalone ingestion utility. Scheduled ingestion belongs to the master platform DAG to avoid duplicate API publishing. |

@@ -62,9 +62,12 @@ def check_spark():
     with urllib.request.urlopen("http://spark-master:8080/json/", timeout=8) as response:
         payload = json.loads(response.read().decode("utf-8"))
     workers = int(payload.get("aliveworkers", 0))
+    active_apps = len(payload.get("activeapps", []))
     if workers < 1:
         raise RuntimeError("Spark has no alive workers.")
-    return {"spark": "healthy", "alive_workers": workers, "active_apps": len(payload.get("activeapps", []))}
+    if active_apps < 3:
+        raise RuntimeError(f"Expected active Bronze/Silver/Gold Spark applications; found {active_apps}.")
+    return {"spark": "healthy", "alive_workers": workers, "active_apps": active_apps}
 
 
 def check_postgres_and_freshness():
