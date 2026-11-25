@@ -38,6 +38,9 @@ def candidates():
 def upload(args):
     s3, bucket = client_and_bucket()
     files = list(candidates())
+    if args.since_hours is not None:
+        cutoff = __import__("time").time() - args.since_hours * 3600
+        files = [path for path in files if path.stat().st_mtime >= cutoff]
     if not files:
         raise SystemExit(f"No eligible backup artifacts found under {BACKUP_ROOT}")
     for path in files:
@@ -47,9 +50,16 @@ def upload(args):
             ExtraArgs={"Metadata": {"sha256": digest, "source_size": str(path.stat().st_size)}})
         head = s3.head_object(Bucket=bucket, Key=key)
         if head.get("Metadata", {}).get("sha256") != digest or head.get("ContentLength") != path.stat().st_size:
-            raise RuntimeError(f"Remote verification failed for {key}")
-        print(f"VERIFIED {key} size={head['ContentLength']} sha256={digest}")
-    print(f"SUCCESS: {len(files)} objects uploaded and HEAD-verified in bucket {bucket}.")
+            raise RuntimeError(f"Remote HEAD verification failed for {key}")
+        # Verify the stored bytes, not only the metadata supplied at upload.
+        with tempfile.TemporaryDirectory(prefix="r2-upload-verify-") as temp:
+            downloaded = Path(temp) / path.name
+            s3.download_file(bucket, key, str(downloaded))
+            downloaded_digest = sha256_file(downloaded)
+            if downloaded_digest != digest or downloaded.stat().st_size != path.stat().st_size:
+                raise RuntimeError(f"Remote download/SHA-256 verification failed for {key}")
+        print(f"VERIFIED {key} size={head['ContentLength']} sha256={digest} download_sha256=match")
+    print(f"SUCCESS: {len(files)} objects uploaded, downloaded and SHA-256 verified in bucket {bucket}.")
 
 def verify_download(args):
     s3, bucket = client_and_bucket()
@@ -86,7 +96,7 @@ def list_objects(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)
-    p = sub.add_parser("upload"); p.add_argument("--prefix", default="egypt-air-quality/backups"); p.set_defaults(func=upload)
+    p = sub.add_parser("upload"); p.add_argument("--prefix", default="egypt-air-quality/backups"); p.add_argument("--since-hours", type=float, default=None); p.set_defaults(func=upload)
     p = sub.add_parser("verify-download"); p.add_argument("key"); p.set_defaults(func=verify_download)
     p = sub.add_parser("list"); p.add_argument("--prefix", default="egypt-air-quality/backups"); p.set_defaults(func=list_objects)
     args = parser.parse_args(); args.func(args)

@@ -15,7 +15,7 @@ def run_ingestion():
 with DAG(
     dag_id="egypt_air_quality_ingestion",
     description="Collect Egyptian air-quality and weather observations hourly.",
-    schedule="0 * * * *",
+    schedule=None,  # Manual-only utility; the master platform DAG owns scheduled ingestion.
     start_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
     catchup=False,
     max_active_runs=1,

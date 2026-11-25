@@ -11,6 +11,64 @@ from psycopg.conninfo import make_conninfo
 
 from gold_data import merge_gold_batches
 
+def load_airflow_runs():
+    import json
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request, urlopen
+
+    api_base = os.getenv("AIRFLOW_API_URL", "").rstrip("/")
+    user = os.getenv("AIRFLOW_API_USER", "")
+    password = os.getenv("AIRFLOW_API_PASSWORD", "")
+    if not api_base or not user or not password:
+        raise RuntimeError("Airflow API credentials are not configured.")
+    root = api_base.removesuffix("/api/v2")
+    token_request = Request(
+        root + "/auth/token",
+        data=json.dumps({"username": user, "password": password}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urlopen(token_request, timeout=8) as response:
+            token_payload = json.loads(response.read().decode("utf-8"))
+        token = token_payload.get("access_token")
+        if not token:
+            raise RuntimeError("Airflow auth endpoint returned no access token.")
+        rows = []
+        for dag_id in (
+            "egypt_air_quality_platform",
+            "egypt_air_quality_monitoring",
+            "egypt_air_quality_ml",
+            "egypt_air_quality_backup",
+        ):
+            url = f"{api_base}/dags/{dag_id}/dagRuns?limit=1&order_by=-start_date"
+            request = Request(url, headers={"Authorization": f"Bearer {token}"})
+            with urlopen(request, timeout=8) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            runs = payload.get("dag_runs", [])
+            if runs:
+                run = runs[0]
+                rows.append({
+                    "DAG": dag_id,
+                    "State": run.get("state", "unknown"),
+                    "Run ID": run.get("dag_run_id"),
+                    "Logical date": run.get("logical_date"),
+                    "Started": run.get("start_date"),
+                    "Ended": run.get("end_date"),
+                })
+            else:
+                rows.append({"DAG": dag_id, "State": "no runs yet"})
+        return rows
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")
+        raise RuntimeError(f"Airflow API returned HTTP {exc.code}: {detail[:200]}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Airflow API is unavailable: {exc.reason}") from exc
+
+
+@st.cache_data(ttl=30)
+def cached_airflow_runs():
+    return load_airflow_runs()
+
 
 logger = logging.getLogger("EgyptAirQualityDashboard")
 
@@ -199,6 +257,22 @@ with st.expander("IoT Sources Control", expanded=False):
                     st.error(str(exc))
     except Exception as exc:
         st.warning(f"Optional-source controls are currently unavailable: {exc}")
+
+with st.expander("Airflow Platform Orchestration", expanded=True):
+    st.caption("Latest run status from the Airflow control plane. Scheduled ingestion is owned by the master platform DAG.")
+    try:
+        airflow_rows = cached_airflow_runs()
+        airflow_frame = pd.DataFrame(airflow_rows)
+        st.dataframe(airflow_frame, hide_index=True, width="stretch")
+        states = [str(row.get("State", "unknown")).lower() for row in airflow_rows]
+        if any(state == "failed" for state in states):
+            st.error("At least one Airflow workflow has a failed latest run. Open Airflow for task-level logs.")
+        elif any(state in ("running", "queued") for state in states):
+            st.info("Airflow workflows are currently running or queued.")
+        elif all(state == "success" for state in states if state != "no runs yet"):
+            st.success("All workflows with recorded runs are healthy.")
+    except Exception as exc:
+        st.warning(f"Airflow run status is unavailable: {exc}")
 
 gold_data_dir = Path(
     os.getenv("GOLD_DATA_DIR", "/opt/project-data/gold/hourly_measurements_v4")

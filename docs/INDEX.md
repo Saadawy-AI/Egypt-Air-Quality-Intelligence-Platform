@@ -11,6 +11,7 @@ Use this index as the entry point for project architecture, implementation guida
 - [Cloudflare R2 backup setup](guides/R2_BACKUP_SETUP.md)
 
 ## Operations
+- [Airflow platform orchestration](operations/AIRFLOW_ORCHESTRATION_2026-11-25.md)
 - [Operations, recovery and backup runbook](operations/OPERATIONS_RECOVERY_AND_BACKUP_RUNBOOK.md)
 - [Security and recovery remediation](operations/SECURITY_AND_RECOVERY_REMEDIATION_2026-11-24.md)
 - [Docker Engine recovery and runtime check](operations/DOCKER_ENGINE_RECOVERY_AND_RUNTIME_CHECK_2026-11-24.md)

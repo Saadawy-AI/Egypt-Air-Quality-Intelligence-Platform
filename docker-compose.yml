@@ -25,6 +25,19 @@ x-airflow-common: &airflow-common
     BRONZE_BASE_PATH: /opt/project-data/bronze
     OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}
     KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    PGHOST: 172.29.0.10
+    PGPORT: "5432"
+    AIRFLOW_DB_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+    PGDATABASE: airquality
+    PGUSER: airquality
+    PGPASSWORD: ${APP_DB_PASSWORD}
+    R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+    R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+    R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+    R2_BUCKET: ${R2_BUCKET:-}
+    TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    ML_OUTPUT_DIR: /opt/model-candidates
     AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
     AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
   volumes:
@@ -32,7 +45,11 @@ x-airflow-common: &airflow-common
     - ./airflow/logs:/opt/airflow/logs
     - ./airflow/plugins:/opt/airflow/plugins
     - ./data:/opt/project-data
+    - ./ml/models:/opt/project-models:ro
+    - ml_candidates:/opt/model-candidates
     - ./ingestion:/opt/airflow/ingestion:ro
+    - ./scripts:/opt/airflow/scripts:ro
+    - ./backups:/opt/airflow/backups
   user: "${AIRFLOW_UID:-50000}:0"
   group_add:
     - "185"
@@ -464,8 +481,26 @@ services:
       - ./spark:/opt/spark-apps:ro
     restart: on-failure
 
+  model-volume-init:
+    image: egypt-air-quality-airflow:local
+    user: "0:0"
+    volumes:
+      - ml_candidates:/opt/model-candidates
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        mkdir -p /opt/model-candidates
+        chown -R 50000:0 /opt/model-candidates
+        chmod 2775 /opt/model-candidates
+    restart: "no"
+
   airflow-init:
     <<: *airflow-common
+    depends_on:
+      postgres:
+        condition: service_healthy
+      model-volume-init:
+        condition: service_completed_successfully
     entrypoint: ["/bin/bash", "-ec"]
     command:
       - |
@@ -564,6 +599,9 @@ services:
       ML_METADATA_PATH: /opt/project-models/pm25/pm25_hgb_v2.json
       CONTROL_API_URL: http://source-control-api:8088
       CONTROL_API_TOKEN: ${CONTROL_API_TOKEN:?Set CONTROL_API_TOKEN in the ignored .env file}
+      AIRFLOW_API_URL: http://airflow-api-server:8080/api/v2
+      AIRFLOW_API_USER: ${AIRFLOW_ADMIN_USER:-admin}
+      AIRFLOW_API_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
     volumes:
       - ./data:/opt/project-data:ro
       - ./ml/models:/opt/project-models:ro
@@ -583,6 +621,7 @@ volumes:
   kafka_data:
   mosquitto_data:
   mosquitto_log:
+  ml_candidates:
 
 networks:
   control-plane:
