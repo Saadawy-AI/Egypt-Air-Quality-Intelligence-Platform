@@ -74,3 +74,9 @@ jobs:
 
       - name: Check patch whitespace
         run: git diff --check HEAD^ HEAD
+
+      - name: Install Bicep CLI
+        run: az bicep install
+
+      - name: Compile Azure Bicep template
+        run: az bicep build --file infra/azure/main.bicep --stdout > /dev/null
