@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schema.sql"
+SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas" / "schema.sql"
 
 
 def test_classification_view_is_created_after_fact_and_source_tables():

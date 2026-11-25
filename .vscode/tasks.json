@@ -65,7 +65,7 @@
 				"-m",
 				"pytest",
 				"-q",
-				"ingestion/tests"
+				"testing/unit/ingestion"
 			],
 			"isBackground": false,
 			"problemMatcher": [],

@@ -28,7 +28,7 @@ data/checkpoints/
 data/staging/
 data/ivy2/
 spark/checkpoints/
-models/
+ml/models/
 *.log
 
 # Local databases, recovery archives and temporary test artifacts

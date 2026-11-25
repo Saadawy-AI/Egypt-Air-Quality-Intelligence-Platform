@@ -12,3 +12,5 @@ models
 
 # Keep local backup artifacts out of Docker build contexts.
 backups/
+
+ml/models

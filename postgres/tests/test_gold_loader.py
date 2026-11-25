@@ -1,6 +1,6 @@
 from contextlib import nullcontext
 
-from postgres import gold_loader
+from postgres.loaders import gold_loader
 
 
 class ExistingBatchConnection:

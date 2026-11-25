@@ -1,22 +1,22 @@
-from ingestion.sources.open_meteo_air_quality import (
+from ingestion.open_meteo_air_quality.client import (
     OpenMeteoAirQualityClient
 )
-from ingestion.sources.open_meteo_weather import (
+from ingestion.open_meteo_weather.client import (
     OpenMeteoWeatherClient
 )
-from ingestion.sources.openaq import OpenAQClient
+from ingestion.openaq.client import OpenAQClient
 
-from ingestion.pipelines.open_meteo_pipeline import (
+from ingestion.common.open_meteo_pipeline import (
     fetch_normalized_meteo_records
 )
-from ingestion.pipelines.openaq_pipeline import (
+from ingestion.openaq.pipeline import (
     fetch_normalized_latest_records
 )
 
 from ingestion.producers.kafka_producer import KafkaProducerClient
 
-from ingestion.publishers.openaq_publisher import OpenAQPublisher
-from ingestion.publishers.open_meteo_publisher import OpenMeteoPublisher
+from ingestion.openaq.publisher import OpenAQPublisher
+from ingestion.common.open_meteo_publisher import OpenMeteoPublisher
 
 from ingestion.utils.logger import get_logger
 

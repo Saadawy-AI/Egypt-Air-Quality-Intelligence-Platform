@@ -4,7 +4,7 @@ x-airflow-common: &airflow-common
   image: egypt-air-quality-airflow:local
   build:
     context: .
-    dockerfile: airflow/Dockerfile
+    dockerfile: infra/docker/airflow.Dockerfile
   env_file:
     - .env.airflow-jwt
   environment: &airflow-env
@@ -70,7 +70,7 @@ services:
   postgres-loader:
     build:
       context: .
-      dockerfile: postgres/Dockerfile
+      dockerfile: infra/docker/postgres.Dockerfile
     environment:
       # Use the stable PostgreSQL address on postgres-private to bypass
       # intermittent Docker embedded-DNS failures for this polling service.
@@ -84,7 +84,8 @@ services:
       POLL_SECONDS: "60"
     volumes:
       - ./data:/opt/project-data:ro
-      - ./postgres:/app:ro
+      - ./postgres/loaders/gold_loader.py:/app/gold_loader.py:ro
+      - ./postgres/schemas/schema.sql:/app/schema.sql:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,7 +100,7 @@ services:
     profiles: ["ml"]
     build:
       context: .
-      dockerfile: ml/Dockerfile
+      dockerfile: infra/docker/ml.Dockerfile
     environment:
       PGHOST: 172.29.0.10
       PGPORT: "5432"
@@ -108,7 +109,7 @@ services:
       PGPASSWORD: ${APP_DB_PASSWORD}
       ML_OUTPUT_DIR: /opt/project-models/pm25
     volumes:
-      - ./models:/opt/project-models
+      - ./ml/models:/opt/project-models
       - ./ml:/app/ml:ro
       - ./data:/opt/project-data:ro
     depends_on:
@@ -121,7 +122,7 @@ services:
   anomaly-detector:
     build:
       context: .
-      dockerfile: monitoring/Dockerfile
+      dockerfile: infra/docker/monitoring.Dockerfile
     environment:
       # Use the stable PostgreSQL address on postgres-private to bypass
       # intermittent Docker embedded-DNS failures for this polling service.
@@ -202,7 +203,7 @@ services:
     profiles: ["bootstrap"]
     build:
       context: .
-      dockerfile: ingestion/Dockerfile
+      dockerfile: infra/docker/ingestion.Dockerfile
     environment:
       OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
@@ -216,7 +217,7 @@ services:
     ports:
       - "127.0.0.1:1883:1883"
     volumes:
-      - ./mosquitto/config:/mosquitto/config:ro
+      - ./infra/docker/mosquitto/config:/mosquitto/config:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
     restart: unless-stopped
@@ -224,7 +225,7 @@ services:
   mqtt-kafka-bridge:
     build:
       context: .
-      dockerfile: ingestion/mqtt/Dockerfile
+      dockerfile: infra/docker/mqtt.Dockerfile
     command:
       - /bin/bash
       - -ec
@@ -264,13 +265,13 @@ services:
     restart: unless-stopped
 
   # Opt-in virtual IoT fleet. All records are labeled iot_sensor_simulator.
-  # Start explicitly with: docker compose --profile iot-simulator run --rm iot-simulator python -m ingestion.mqtt.simulator --once
+  # Start explicitly with: docker compose --profile iot-simulator run --rm iot-simulator python -m ingestion.iot.simulator.simulator --once
   iot-simulator:
     profiles: ["iot-simulator"]
     build:
       context: .
-      dockerfile: ingestion/mqtt/Dockerfile
-    command: ["python", "-m", "ingestion.mqtt.simulator"]
+      dockerfile: infra/docker/mqtt.Dockerfile
+    command: ["python", "-m", "ingestion.iot.simulator.simulator"]
     environment:
       MQTT_HOST: mqtt
       MQTT_PORT: "1883"
@@ -288,8 +289,8 @@ services:
     profiles: ["wokwi"]
     build:
       context: .
-      dockerfile: ingestion/mqtt/Dockerfile
-    command: ["python", "-m", "ingestion.mqtt.wokwi_bridge"]
+      dockerfile: infra/docker/mqtt.Dockerfile
+    command: ["python", "-m", "ingestion.iot.wokwi.bridge"]
     environment:
       MQTT_HOST: mqtt
       MQTT_PORT: "1883"
@@ -381,7 +382,7 @@ services:
           --conf spark.executor.memory=512m \
           --conf spark.jars.ivy=/opt/project-data/ivy2 \
           --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.7 \
-          /opt/spark-apps/jobs/bronze_ingestion.py
+          /opt/spark-apps/bronze/ingestion.py
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -417,7 +418,7 @@ services:
       - spark.executor.cores=1
       - --conf
       - spark.executor.memory=512m
-      - /opt/spark-apps/jobs/silver_ingestion.py
+      - /opt/spark-apps/silver/ingestion.py
     depends_on:
       spark-bronze:
         condition: service_started
@@ -450,7 +451,7 @@ services:
       - spark.executor.cores=1
       - --conf
       - spark.executor.memory=512m
-      - /opt/spark-apps/jobs/gold_aggregation.py
+      - /opt/spark-apps/gold/aggregation.py
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
     depends_on:
@@ -548,7 +549,8 @@ services:
 
   streamlit:
     build:
-      context: ./streamlit_app
+      context: .
+      dockerfile: infra/docker/streamlit.Dockerfile
     ports:
       - "127.0.0.1:8501:8501"
     environment:
@@ -564,7 +566,7 @@ services:
       CONTROL_API_TOKEN: ${CONTROL_API_TOKEN:?Set CONTROL_API_TOKEN in the ignored .env file}
     volumes:
       - ./data:/opt/project-data:ro
-      - ./models:/opt/project-models:ro
+      - ./ml/models:/opt/project-models:ro
     depends_on:
       postgres:
         condition: service_healthy

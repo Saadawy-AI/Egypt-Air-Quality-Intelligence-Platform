@@ -77,12 +77,12 @@ docker network ls
 
 section "10. PROJECT PYTHON FILES"
 
-find ingestion spark airflow streamlit_app \
+find ingestion spark airflow streamlit \
     -type f -name '*.py' 2>/dev/null | sort
 
 section "11. PYTHON FILE LINE COUNTS"
 
-find ingestion spark airflow streamlit_app \
+find ingestion spark airflow streamlit \
     -type f -name '*.py' 2>/dev/null \
     -exec wc -l {} + 2>/dev/null
 
@@ -110,13 +110,13 @@ find postgres -type f 2>/dev/null
 
 section "17. STREAMLIT FILES"
 
-find streamlit_app -type f 2>/dev/null
+find streamlit -type f 2>/dev/null
 
 section "18. DEPENDENCIES"
 
 for f in requirements.txt pyproject.toml setup.py \
          ingestion/requirements.txt \
-         streamlit_app/requirements.txt; do
+         streamlit/requirements.txt; do
     if [ -f "$f" ]; then
         echo ""
         echo "FILE: $f"
@@ -147,7 +147,7 @@ find . -maxdepth 4 -type f \
 section "21. TODO AND FIXME"
 
 grep -RInE 'TODO|FIXME|XXX|NotImplementedError' \
-    ingestion spark airflow postgres streamlit_app \
+    ingestion spark airflow postgres streamlit \
     --exclude-dir=__pycache__ 2>/dev/null | head -300
 
 section "22. DATA DIRECTORY STRUCTURE AND SIZES"

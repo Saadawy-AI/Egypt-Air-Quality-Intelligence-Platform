@@ -10,13 +10,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pyarrow.dataset as ds
 
-from ingestion.sources.open_meteo_air_quality import (
+from ingestion.open_meteo_air_quality.client import (
     OpenMeteoAirQualityClient,
 )
-from ingestion.sources.open_meteo_weather import (
+from ingestion.open_meteo_weather.client import (
     OpenMeteoWeatherClient,
 )
-from ingestion.sources.openaq import OpenAQClient
+from ingestion.openaq.client import OpenAQClient
 
 
 TOPICS = {

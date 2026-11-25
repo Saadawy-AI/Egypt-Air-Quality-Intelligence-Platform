@@ -13,7 +13,7 @@ The current candidate target is:
 - Private networking/private DNS and Azure Monitor.
 - Key Vault only for secrets that cannot be replaced by managed identity.
 
-The architecture decision and trade-offs are documented in [the streaming architecture decision](../../docs/AZURE_STREAMING_ARCHITECTURE_DECISION_2026-11-24.md).
+The architecture decision and trade-offs are documented in [the streaming architecture decision](../../docs/architecture/AZURE_STREAMING_ARCHITECTURE_DECISION_2026-11-24.md).
 
 ## Files
 
@@ -72,4 +72,4 @@ A successful compile checks template syntax only. It does not validate quota, po
 
 ## Readiness decision
 
-Current status remains **NOT READY FOR AZURE DEPLOYMENT**. Continue with read-only account, billing, quota and service-availability checks, then close the architecture/security/IaC gaps before considering a non-production deployment. See [the Azure readiness review](../../docs/AZURE_READINESS_REVIEW_2026-11-25.md).
+Current status remains **NOT READY FOR AZURE DEPLOYMENT**. Continue with read-only account, billing, quota and service-availability checks, then close the architecture/security/IaC gaps before considering a non-production deployment. See [the Azure readiness review](../../docs/reports/AZURE_READINESS_REVIEW_2026-11-25.md).

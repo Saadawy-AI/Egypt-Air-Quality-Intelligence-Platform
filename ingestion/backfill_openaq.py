@@ -12,8 +12,8 @@ from ingestion.config.governorates import GOVERNORATES
 from ingestion.processors.normalizer import normalize_openaq_measurement
 from ingestion.processors.validator import get_validation_errors
 from ingestion.producers.kafka_producer import KafkaProducerClient
-from ingestion.publishers.openaq_publisher import OpenAQPublisher
-from ingestion.sources.openaq import OpenAQClient
+from ingestion.openaq.publisher import OpenAQPublisher
+from ingestion.openaq.client import OpenAQClient
 from ingestion.utils.logger import get_logger
 
 
