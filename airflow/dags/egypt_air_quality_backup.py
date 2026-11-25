@@ -173,7 +173,17 @@ def resume_spark_streams():
     return {"restarted": list(SPARK_SOURCES), "result": "all_running"}
 
 
-def upload_and_verify():
+def upload_and_verify(**context):
+    # The resume task uses ALL_DONE, so its success alone must never authorize
+    # an upload when the lake snapshot itself failed or was interrupted.
+    dag_run = context.get("dag_run")
+    lake_ti = dag_run.get_task_instance(task_id="archive_bronze_silver_gold_and_checkpoints") if dag_run else None
+    if lake_ti is None or lake_ti.state != "success":
+        lake_state = lake_ti.state if lake_ti else "missing"
+        raise RuntimeError(
+            f"Refusing R2 upload: coordinated lake snapshot did not succeed (state={lake_state})."
+        )
+
     required = ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
     missing = [name for name in required if not os.getenv(name)]
     if missing:
