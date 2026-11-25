@@ -40,6 +40,8 @@ x-airflow-common: &airflow-common
     ML_OUTPUT_DIR: /opt/model-candidates
     AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
     AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+    CONTROL_API_URL: http://source-control-api:8088
+    CONTROL_API_TOKEN: ${CONTROL_API_TOKEN:?Set CONTROL_API_TOKEN in the ignored .env file}
   volumes:
     - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
@@ -59,6 +61,7 @@ x-airflow-common: &airflow-common
   networks:
     default: {}
     postgres-private: {}
+    control-plane: {}
 
 services:
   postgres:

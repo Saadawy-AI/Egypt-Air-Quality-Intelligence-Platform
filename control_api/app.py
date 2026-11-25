@@ -1,4 +1,4 @@
-"""Allowlisted lifecycle controller for optional IoT Compose services."""
+"""Allowlisted lifecycle controller for optional IoT and streaming services."""
 import json, os, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
@@ -7,7 +7,8 @@ from urllib.request import Request, urlopen
 
 DOCKER_API=os.getenv("DOCKER_API_URL","http://docker-socket-proxy:2375")
 TOKEN=os.environ["CONTROL_API_TOKEN"]
-ALLOWED={"python_iot":"iot-simulator","wokwi":"wokwi-mqtt-bridge"}
+ALLOWED={"python_iot":"iot-simulator","wokwi":"wokwi-mqtt-bridge",
+         "spark_bronze":"spark-bronze","spark_silver":"spark-silver","spark_gold":"spark-gold"}
 PROJECT=os.getenv("COMPOSE_PROJECT_NAME","egypt-air-quality")
 
 class DockerAPIError(RuntimeError): pass
@@ -46,8 +47,8 @@ def control(source,action):
     if item is None: raise LookupError(f"{service} has not been created by Docker Compose yet")
     cid=quote(item["Id"],safe="")
     if action=="start" and item.get("State")!="running": docker(f"containers/{cid}/start","POST")
-    if action=="stop" and item.get("State")=="running": docker(f"containers/{cid}/stop?t=10","POST",15)
-    for _ in range(10):
+    if action=="stop" and item.get("State")=="running": docker(f"containers/{cid}/stop?t=30","POST",35)
+    for _ in range(20):
         current=find(service)
         if current and ((action=="start" and current.get("State")=="running") or
                         (action=="stop" and current.get("State")!="running")):
