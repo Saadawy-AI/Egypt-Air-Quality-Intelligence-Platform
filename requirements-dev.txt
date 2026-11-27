@@ -1,0 +1,3 @@
+# Test/lint tooling only - never installed into runtime images.
+pytest==9.2.0
+ruff==0.17.6

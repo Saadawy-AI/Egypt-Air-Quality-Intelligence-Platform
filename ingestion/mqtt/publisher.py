@@ -101,6 +101,11 @@ def publish_measurement(message, mqtt_client=None):
 
     try:
         if owns_client:
+            username = os.getenv("MQTT_USERNAME")
+            password = os.getenv("MQTT_PASSWORD")
+            if not username or not password:
+                raise RuntimeError("MQTT_USERNAME and MQTT_PASSWORD are required for the local broker.")
+            client.username_pw_set(username, password)
             client.connect(host, port, keepalive=60)
             client.loop_start()
 

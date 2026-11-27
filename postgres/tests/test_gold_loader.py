@@ -157,15 +157,20 @@ def test_load_batch_uses_coordinate_counts_and_legacy_fallback(monkeypatch, tmp_
         },
     ]
 
-    class Table:
+    class ArrowBatch:
         @staticmethod
         def to_pylist():
             return rows
 
     class Dataset:
         @staticmethod
-        def to_table():
-            return Table()
+        def count_rows():
+            return len(rows)
+
+        @staticmethod
+        def to_batches(batch_size):
+            assert batch_size >= 256
+            return iter([ArrowBatch()])
 
     monkeypatch.setattr(gold_loader.ds, "dataset", lambda *a, **k: Dataset())
     captured = {}
@@ -183,3 +188,67 @@ def test_load_batch_uses_coordinate_counts_and_legacy_fallback(monkeypatch, tmp_
     # FACT_UPSERT tuple positions 12 and 13 are the coordinate denominators.
     assert captured["values"][0][12:14] == (2, 4)
     assert captured["values"][1][12:14] == (3, 3)
+
+
+def test_load_batch_resolves_each_distinct_station_location_once(monkeypatch, tmp_path):
+    """Repeated OpenAQ stations must not re-run the point-in-polygon scan per row."""
+    from datetime import date, datetime, timezone
+
+    batch_id = 22
+    rows = [
+        {
+            "window_start": datetime(2026, 11, 23, hour, tzinfo=timezone.utc),
+            "window_end": datetime(2026, 11, 23, hour + 1, tzinfo=timezone.utc),
+            "window_date": date(2026, 11, 23),
+            "source": "openaq",
+            "governorate": "Unknown",
+            "metric": "pm25",
+            "unit": "ug/m3",
+            "average_value": 10.0 + hour,
+            "minimum_value": 10.0,
+            "maximum_value": 20.0,
+            "measurement_count": 2,
+            "latitude": 30.0,
+            "longitude": 31.0,
+            "latitude_count": 2,
+            "longitude_count": 2,
+        }
+        for hour in range(5, 11)
+    ]
+
+    class ArrowBatch:
+        @staticmethod
+        def to_pylist():
+            return rows
+
+    class Dataset:
+        @staticmethod
+        def count_rows():
+            return len(rows)
+
+        @staticmethod
+        def to_batches(batch_size):
+            return iter([ArrowBatch()])
+
+    lookups = []
+
+    def fake_resolve(latitude, longitude):
+        lookups.append((latitude, longitude))
+        return "Cairo"
+
+    monkeypatch.setattr(gold_loader.ds, "dataset", lambda *a, **k: Dataset())
+    monkeypatch.setattr(gold_loader, "resolve_governorate", fake_resolve)
+    captured = {}
+
+    def capture_execute_many(conn, query, values):
+        captured["query"] = query
+        captured["values"] = list(values)
+
+    monkeypatch.setattr(gold_loader, "execute_many", capture_execute_many)
+
+    gold_loader.load_batch(LoaderConnection(batch_id), batch_id, tmp_path)
+
+    assert lookups == [(30.0, 31.0)]
+    assert len(captured["values"]) == len(rows)
+    # governorate_key (tuple position 4) is the resolved "Cairo" key for every row.
+    assert {values[4] for values in captured["values"]} == {2}

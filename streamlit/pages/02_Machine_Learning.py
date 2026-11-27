@@ -382,6 +382,15 @@ else:
     model = evaluation.get("model", {})
     baseline = evaluation.get("naive_persistence_baseline", {})
     passed = bool(evaluation.get("baseline_gate_passed", False))
+    model_series = evaluation.get("series", [])
+    geographic_scope = str(metadata.get("geographic_scope", ""))
+    if model_series == ["Cairo"] or "current historical coverage is Cairo" in geographic_scope:
+        st.warning(
+            "Geographic limitation: the current trained PM2.5 model and its historical "
+            "evaluation cover Cairo only. This is not an Egypt-wide prediction model. "
+            "Governorate observations shown below describe monitoring coverage, not "
+            "validated model coverage or predictions for those governorates."
+        )
     a, b, c = st.columns(3)
     a.metric("Deployment gate", "Passed" if passed else "Not qualified")
     b.metric("Candidate", metadata.get("model_version", "Unknown"))

@@ -7,6 +7,7 @@ import time
 
 import paho.mqtt.client as mqtt
 from kafka import KafkaProducer
+from ingestion.config.kafka_security import kafka_python_security_config
 
 
 logging.basicConfig(
@@ -37,10 +38,12 @@ class MQTTKafkaBridge:
                 "KAFKA_BOOTSTRAP_SERVERS",
                 "kafka:29092",
             ).split(","),
+            **kafka_python_security_config(),
             acks="all",
             retries=5,
             max_in_flight_requests_per_connection=1,
         )
+        owns_mqtt_client = mqtt_client is None
         self.client = mqtt_client or mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
             client_id=os.getenv(
@@ -49,6 +52,12 @@ class MQTTKafkaBridge:
             ),
             clean_session=False,
         )
+        if owns_mqtt_client:
+            mqtt_username = os.getenv("MQTT_USERNAME")
+            mqtt_password = os.getenv("MQTT_PASSWORD")
+            if not mqtt_username or not mqtt_password:
+                raise RuntimeError("MQTT_USERNAME and MQTT_PASSWORD are required for the local broker.")
+            self.client.username_pw_set(mqtt_username, mqtt_password)
         self.client.manual_ack_set(True)
         self.client.on_connect = self.on_connect
         self.client.on_disconnect = self.on_disconnect

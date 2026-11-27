@@ -17,6 +17,9 @@ param deployEventHubs bool = false
 @description('Deploy Log Analytics workspace. Disabled by default.')
 param deployMonitoring bool = false
 
+@description('Explicitly allow public endpoints. Keep false for secure deployments; enable only for isolated development experiments.')
+param allowPublicNetworkAccess bool = false
+
 @description('Resource tags.')
 param tags object = {
   project: 'Egypt-Air-Quality-Intelligence-Platform'
@@ -41,8 +44,11 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = if (deployStor
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
     allowSharedKeyAccess: false
-    publicNetworkAccess: 'Enabled'
-    networkAcls: { bypass: 'AzureServices', defaultAction: 'Allow' }
+    publicNetworkAccess: allowPublicNetworkAccess ? 'Enabled' : 'Disabled'
+    networkAcls: {
+      bypass: allowPublicNetworkAccess ? 'AzureServices' : 'None'
+      defaultAction: allowPublicNetworkAccess ? 'Allow' : 'Deny'
+    }
   }
 }
 
@@ -54,7 +60,7 @@ resource eventHubNamespace 'Microsoft.EventHub/namespaces@2024-01-01' = if (depl
   properties: {
     isAutoInflateEnabled: false
     maximumThroughputUnits: 0
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: allowPublicNetworkAccess ? 'Enabled' : 'Disabled'
   }
 }
 
@@ -71,8 +77,8 @@ resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (d
   properties: {
     sku: { name: 'PerGB2018' }
     retentionInDays: 30
-    publicNetworkAccessForIngestion: 'Enabled'
-    publicNetworkAccessForQuery: 'Enabled'
+    publicNetworkAccessForIngestion: allowPublicNetworkAccess ? 'Enabled' : 'Disabled'
+    publicNetworkAccessForQuery: allowPublicNetworkAccess ? 'Enabled' : 'Disabled'
   }
 }
 

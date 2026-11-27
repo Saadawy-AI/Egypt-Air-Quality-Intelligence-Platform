@@ -5,6 +5,7 @@ from kafka import KafkaConsumer
 from kafka.errors import KafkaError
 
 from ingestion.config.settings import settings
+from ingestion.config.kafka_security import kafka_python_security_config
 from ingestion.utils.logger import get_logger
 
 
@@ -37,6 +38,7 @@ class KafkaConsumerClient:
         self.consumer = KafkaConsumer(
 
             bootstrap_servers=self.bootstrap_servers,
+            **kafka_python_security_config(),
 
             group_id=self.group_id,
 

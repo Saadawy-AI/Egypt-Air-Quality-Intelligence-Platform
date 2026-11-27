@@ -16,6 +16,10 @@ USER airflow
 
 COPY --chown=airflow:0 ingestion /opt/airflow/ingestion
 COPY --chown=airflow:0 ml /opt/airflow/ml
+# Bake Python import paths into the image; avoid Windows/WSL bind mounts.
+COPY --chown=airflow:0 airflow/dags /opt/airflow/dags
+COPY --chown=airflow:0 airflow/plugins /opt/airflow/plugins
+COPY --chown=airflow:0 scripts /opt/airflow/scripts
 
 RUN pip install --no-cache-dir \
     python-dotenv \
@@ -30,3 +34,9 @@ RUN pip install --no-cache-dir \
     joblib==1.4.2
 
 ENV PYTHONPATH=/opt/airflow
+
+# Retry only the Airflow 3.0.6 RTIF primary-key race; do not mask other DB errors.
+COPY --chown=airflow:0 infra/docker/patches/patch_airflow_rtif.py /tmp/patch_airflow_rtif.py
+RUN python /tmp/patch_airflow_rtif.py \
+    && python -m py_compile /home/airflow/.local/lib/python3.12/site-packages/airflow/api_fastapi/execution_api/routes/task_instances.py \
+    && rm -f /tmp/patch_airflow_rtif.py

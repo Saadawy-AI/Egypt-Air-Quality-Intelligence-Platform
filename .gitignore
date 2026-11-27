@@ -25,6 +25,7 @@ data/silver/
 data/quarantine/
 data/gold/
 data/checkpoints/
+data/kafka-certs/
 data/staging/
 data/ivy2/
 spark/checkpoints/

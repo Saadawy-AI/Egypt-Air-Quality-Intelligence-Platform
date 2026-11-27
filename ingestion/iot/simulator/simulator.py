@@ -123,11 +123,29 @@ def main():
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
         client_id=os.getenv("MQTT_SIMULATOR_CLIENT_ID", "egypt-air-quality-iot-simulator"),
     )
+    username = os.getenv("MQTT_USERNAME")
+    password = os.getenv("MQTT_PASSWORD")
+    if not username or not password:
+        raise RuntimeError("MQTT_USERNAME and MQTT_PASSWORD are required for the local broker.")
+    client.username_pw_set(username, password)
+    connected = Event()
+    connection_error = []
+
+    def on_connect(client, userdata, flags, reason_code, properties):
+        if getattr(reason_code, "is_failure", False):
+            connection_error.append(reason_code)
+        connected.set()
+
+    client.on_connect = on_connect
     client.connect(host, port, keepalive=60)
     client.loop_start()
     sequence = 0
     total = 0
     try:
+        if not connected.wait(timeout=15):
+            raise TimeoutError("MQTT broker did not complete the simulator connection handshake.")
+        if connection_error:
+            raise RuntimeError(f"MQTT broker rejected the simulator credentials: {connection_error[0]}")
         while not STOP_EVENT.is_set():
             sequence += 1
             total += publish_once(client, rng, sequence)

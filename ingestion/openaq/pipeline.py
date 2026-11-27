@@ -1,3 +1,6 @@
+from math import asin, cos, radians, sin, sqrt
+
+from ingestion.config.governorates import GOVERNORATES
 from ingestion.processors.normalizer import (
     normalize_openaq_measurement
 )
@@ -10,6 +13,70 @@ from ingestion.utils.logger import get_logger
 
 
 logger = get_logger("OpenAQPipeline")
+
+
+def _governorate_for_location(location):
+    """Resolve OpenAQ administrative labels, then fall back to nearest Egyptian governorate centroid.
+
+    The coordinate fallback is deliberately bounded to avoid assigning distant
+    or out-of-country stations to an unrelated governorate.
+    """
+    for key in ("governorate", "admin", "city", "locality", "name"):
+        value = location.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        candidate = value.strip()
+        for governorate in GOVERNORATES:
+            if candidate.casefold() == governorate.casefold():
+                return governorate
+
+    coordinates = location.get("coordinates") or {}
+    latitude = coordinates.get("latitude")
+    longitude = coordinates.get("longitude")
+    if latitude is None or longitude is None:
+        return None
+    try:
+        latitude = float(latitude)
+        longitude = float(longitude)
+    except (TypeError, ValueError):
+        return None
+    if not (21.5 <= latitude <= 32.2 and 24.5 <= longitude <= 37.0):
+        return None
+
+    def distance_km(target_latitude, target_longitude):
+        lat1, lat2 = radians(latitude), radians(target_latitude)
+        delta_lat = lat2 - lat1
+        delta_lon = radians(target_longitude - longitude)
+        haversine = (
+            sin(delta_lat / 2) ** 2
+            + cos(lat1) * cos(lat2) * sin(delta_lon / 2) ** 2
+        )
+        return 6371.0 * 2 * asin(sqrt(haversine))
+
+    governorate, distance = min(
+        [
+            (
+                name,
+                distance_km(details["latitude"], details["longitude"]),
+            )
+            for name, details in GOVERNORATES.items()
+        ],
+        key=lambda item: item[1],
+    )
+    if distance > 80:
+        logger.warning(
+            "OpenAQ location could not be assigned confidently | location_id=%s distance_km=%.1f",
+            location.get("id"),
+            distance,
+        )
+        return None
+    logger.info(
+        "Resolved OpenAQ governorate from coordinates | location_id=%s governorate=%s distance_km=%.1f",
+        location.get("id"),
+        governorate,
+        distance,
+    )
+    return governorate
 
 
 def fetch_normalized_latest_records(client, locations):
@@ -42,6 +109,14 @@ def fetch_normalized_latest_records(client, locations):
         )
 
         try:
+            governorate = _governorate_for_location(location)
+            if governorate is None:
+                logger.warning(
+                    "OpenAQ location has no resolvable governorate | location_id=%s name=%s",
+                    location_id,
+                    location.get("name"),
+                )
+
             # Fetch sensors.
             sensors = client.get_sensors(location_id)
 
@@ -90,7 +165,8 @@ def fetch_normalized_latest_records(client, locations):
                     record = normalize_openaq_measurement(
                         measurement=measurement,
                         location=location,
-                        sensor=sensor
+                        sensor=sensor,
+                        governorate=governorate,
                     )
 
                     errors = get_validation_errors(record)

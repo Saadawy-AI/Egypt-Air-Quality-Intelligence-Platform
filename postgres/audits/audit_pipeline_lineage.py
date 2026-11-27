@@ -13,7 +13,7 @@ gold = root / 'gold/hourly_measurements_v4'
 d = ds.dataset(str(bronze), format='parquet')
 t = d.to_table(columns=['kafka_key','topic','partition','offset','raw_value'])
 v = t.to_pydict()
-from collections import Counter, defaultdict
+from collections import Counter
 keys = [x for x in v['kafka_key'] if x is not None]
 key_counts = Counter(keys)
 bronze_summary = {

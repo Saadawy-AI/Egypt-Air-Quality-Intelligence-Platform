@@ -78,11 +78,6 @@ CREATE TABLE IF NOT EXISTS anomaly_alerts (
         UNIQUE (window_start, source_key, governorate_key, metric_key)
 );
 
-ALTER TABLE anomaly_alerts
-    ADD COLUMN IF NOT EXISTS suppressed_at TIMESTAMPTZ;
-
-ALTER TABLE anomaly_alerts
-    ADD COLUMN IF NOT EXISTS suppression_reason TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_pending_v2
     ON anomaly_alerts (created_at, alert_id)

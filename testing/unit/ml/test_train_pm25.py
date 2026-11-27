@@ -28,8 +28,9 @@ def test_features_use_only_prior_observations():
         "lag_1", "lag_2", "lag_3", "lag_6", "lag_12", "lag_24",
         "lag_48", "lag_168", "rolling_mean_24", "rolling_std_24",
         "rolling_mean_168", "hour_sin", "hour_cos", "weekday_sin",
-        "weekday_cos", "month_sin", "month_cos", "series_code",
+        "weekday_cos", "month_sin", "month_cos",
     ]
+    assert "series_code" not in result.columns
 
 
 def test_missing_hours_are_not_interpolated_into_lags():

@@ -1,3 +1,9 @@
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from kafka_security import with_kafka_security_options  # noqa: E402
+
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
 
@@ -17,8 +23,7 @@ def main():
     print("=" * 60)
 
     kafka_stream = (
-        spark.readStream
-        .format("kafka")
+        with_kafka_security_options(spark.readStream.format("kafka"))
         .option("kafka.bootstrap.servers", "kafka:29092")
         .option("subscribe", "air-quality")
         .option("startingOffsets", "earliest")

@@ -4,46 +4,16 @@ import os
 import re
 import subprocess
 import sys
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import psycopg
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
+from platform_common import db, send_failure_alert
 
 MODEL_ROOT = Path("/opt/model-candidates")
 
 
-def send_failure_alert(context):
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
-        print("Airflow alert skipped: Telegram credentials are not configured.")
-        return
-    ti = context.get("task_instance")
-    dag_id = context.get("dag").dag_id if context.get("dag") else "unknown"
-    task_id = ti.task_id if ti else "unknown"
-    payload = json.dumps({
-        "chat_id": chat_id,
-        "text": f"Airflow task failed\\nDAG: {dag_id}\\nTask: {task_id}\\nRun: {context.get('run_id', 'unknown')}",
-    }).encode()
-    request = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data=payload, headers={"Content-Type": "application/json"},
-    )
-    try:
-        urllib.request.urlopen(request, timeout=10).read()
-    except Exception as exc:
-        print(f"Could not deliver Airflow failure alert: {exc}")
-
-
-def db():
-    return psycopg.connect(
-        host=os.environ["PGHOST"], port=os.getenv("PGPORT", "5432"),
-        dbname=os.environ["PGDATABASE"], user=os.environ["PGUSER"],
-        password=os.environ["PGPASSWORD"], connect_timeout=10,
-    )
 
 
 def train_candidate(**context):

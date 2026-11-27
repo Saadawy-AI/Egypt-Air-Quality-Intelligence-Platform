@@ -1,8 +1,7 @@
-requests
-python-dotenv
-pandas
-pydantic
-kafka-python
-paho-mqtt
-pytest
-pyarrow
+requests==2.32.5
+python-dotenv==1.2.4
+pandas==2.2.3
+pydantic==2.14.3
+kafka-python==3.0.13
+paho-mqtt==2.2.0
+pyarrow==26.0.1

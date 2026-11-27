@@ -72,12 +72,15 @@ _GOVERNORATE_POLYGONS = None
 def resolve_governorate(latitude, longitude):
     global _GOVERNORATE_POLYGONS
     if latitude is None or longitude is None:
+        logger.debug("Governorate lookup skipped: missing coordinates.")
         return None
     try:
         latitude, longitude = float(latitude), float(longitude)
     except (TypeError, ValueError):
+        logger.warning("Governorate lookup received invalid coordinates: lat=%r lon=%r", latitude, longitude)
         return None
     if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        logger.warning("Governorate lookup received out-of-range coordinates: lat=%s lon=%s", latitude, longitude)
         return None
     if _GOVERNORATE_POLYGONS is None:
         _GOVERNORATE_POLYGONS = load_governorate_polygons()
@@ -89,7 +92,13 @@ def resolve_governorate(latitude, longitude):
             matched = any(_point_in_polygon(longitude, latitude, polygon) for polygon in coordinates)
         if matched:
             matches.append(name)
-    return matches[0] if len(matches) == 1 else None
+    if len(matches) != 1:
+        logger.warning(
+            "Governorate lookup did not resolve uniquely | lat=%s | lon=%s | matches=%s",
+            latitude, longitude, matches,
+        )
+        return None
+    return matches[0]
 
 
 def effective_governorate(row):
@@ -182,9 +191,9 @@ def connection_info():
 def ensure_schema(conn):
     schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
     with conn.transaction():
-        for statement in schema_sql.split(";"):
-            if statement.strip():
-                conn.execute(statement)
+        # Execute the complete parameter-free SQL script; splitting on semicolons
+        # is unsafe when literals or procedural blocks contain semicolons.
+        conn.execute(schema_sql, prepare=False)
         conn.execute("SET TIME ZONE 'UTC'")
     logger.info("PostgreSQL serving schema is ready.")
 
@@ -194,32 +203,39 @@ def discover_batches():
         return []
 
     batches = []
-    for path in GOLD_DATA_DIR.glob("batch_id=*"):
-        try:
-            batch_id = int(path.name.split("=", 1)[1])
-        except (IndexError, ValueError):
-            continue
+    # Avoid Path.glob()/list(scandir) here: the root contains many batch
+    # directories and pathlib may materialize the full directory listing.
+    with os.scandir(GOLD_DATA_DIR) as root_entries:
+        for root_entry in root_entries:
+            if not root_entry.name.startswith("batch_id="):
+                continue
+            if not root_entry.is_dir(follow_symlinks=False):
+                continue
+            try:
+                batch_id = int(root_entry.name.split("=", 1)[1])
+            except (IndexError, ValueError):
+                continue
 
-        # pathlib glob/os.walk can materialize every filename in a large
-        # legacy batch directory. The loader container has a deliberately
-        # small memory limit, so traverse with os.scandir and stop at the
-        # first Parquet file; only directory paths are retained in memory.
-        if not (path / "_SUCCESS").is_file():
-            continue
-        pending_directories = [path]
-        has_parquet = False
-        while pending_directories and not has_parquet:
-            current_directory = pending_directories.pop()
-            with os.scandir(current_directory) as entries:
-                for entry in entries:
-                    if entry.is_file(follow_symlinks=False):
-                        if entry.name.endswith(".parquet"):
-                            has_parquet = True
-                            break
-                    elif entry.is_dir(follow_symlinks=False):
-                        pending_directories.append(Path(entry.path))
-        if has_parquet:
-            batches.append((batch_id, path))
+            path = Path(root_entry.path)
+            if not (path / "_SUCCESS").is_file():
+                continue
+
+            # Traverse partition directories lazily and stop at the first
+            # Parquet file; retain only the small set of directory paths.
+            pending_directories = [path]
+            has_parquet = False
+            while pending_directories and not has_parquet:
+                current_directory = pending_directories.pop()
+                with os.scandir(current_directory) as entries:
+                    for entry in entries:
+                        if entry.is_file(follow_symlinks=False):
+                            if entry.name.endswith(".parquet"):
+                                has_parquet = True
+                                break
+                        elif entry.is_dir(follow_symlinks=False):
+                            pending_directories.append(Path(entry.path))
+            if has_parquet:
+                batches.append((batch_id, path))
 
     return sorted(batches, key=lambda item: item[0])
 
@@ -256,9 +272,8 @@ def execute_many(conn, query, values):
 
 
 def load_batch(conn, batch_id, batch_path):
-    # The loader polls continuously. Check the idempotency ledger before
-    # scanning/reading Parquet so already-loaded batches are effectively free.
-    # Keep the transactional INSERT below as a second guard against races.
+    # Fast path for the common poll loop. The unique ledger insert below remains
+    # the authoritative concurrency guard.
     with conn.transaction():
         already_loaded = conn.execute(
             "SELECT 1 FROM processed_gold_batches WHERE batch_id = %s",
@@ -268,17 +283,21 @@ def load_batch(conn, batch_id, batch_path):
         logger.debug("Gold batch already loaded; skipping file read | batch=%s", batch_id)
         return
 
-    table = ds.dataset(
+    dataset = ds.dataset(
         str(batch_path),
         format="parquet",
         partitioning="hive",
-    ).to_table()
-    rows = table.to_pylist()
-
-    if not rows:
+    )
+    row_count = dataset.count_rows()
+    if row_count == 0:
         logger.info("Skipped empty Gold batch | batch=%s", batch_id)
         return
 
+    batch_size = max(256, int(os.getenv("GOLD_LOADER_BATCH_SIZE", "4096")))
+    loaded_rows = 0
+
+    # The ledger and every fact upsert share one transaction. If any Arrow
+    # chunk fails, both the facts and the ledger claim roll back together.
     with conn.transaction():
         inserted = conn.execute(
             """
@@ -287,122 +306,145 @@ def load_batch(conn, batch_id, batch_path):
             ON CONFLICT (batch_id) DO NOTHING
             RETURNING batch_id
             """,
-            (batch_id, len(rows), str(batch_path)),
+            (batch_id, row_count, str(batch_path)),
         ).fetchone()
-
         if inserted is None:
             logger.debug("Gold batch already loaded by another loader | batch=%s", batch_id)
             return
 
-        sources = sorted({row["source"] for row in rows if row["source"]})
-        resolved_governorates = [effective_governorate(row) for row in rows]
-        governorates = sorted(set(resolved_governorates))
-        metrics = sorted({
-            (row["metric"], row.get("unit") or "")
-            for row in rows
-            if row.get("metric")
-        })
-        dates = {
-            date_attributes(row["window_date"])
-            for row in rows
-            if row.get("window_date") is not None
-        }
+        for arrow_batch in dataset.to_batches(batch_size=batch_size):
+            rows = arrow_batch.to_pylist()
+            if not rows:
+                continue
 
-        execute_many(conn,
-            """
-            INSERT INTO dim_source (source_name) VALUES (%s)
-            ON CONFLICT (source_name) DO NOTHING
-            """,
-            [(value,) for value in sources],
-        )
-        execute_many(conn,
-            """
-            INSERT INTO dim_governorate (governorate_name) VALUES (%s)
-            ON CONFLICT (governorate_name) DO NOTHING
-            """,
-            [(value,) for value in governorates],
-        )
-        execute_many(conn,
-            """
-            INSERT INTO dim_metric (metric_name, unit) VALUES (%s, %s)
-            ON CONFLICT (metric_name, unit) DO NOTHING
-            """,
-            metrics,
-        )
-        execute_many(conn,
-            """
-            INSERT INTO dim_date (
-                date_key, date_value, year, quarter, month, day, day_of_week
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (date_key) DO NOTHING
-            """,
-            sorted(dates),
-        )
+            sources = sorted({row["source"] for row in rows if row.get("source")})
+            # Stations repeat heavily inside a batch; memoize the polygon lookup
+            # so each distinct (source, governorate, lat, lon) is resolved once.
+            governorate_memo = {}
+            resolved_governorates = []
+            for row in rows:
+                memo_key = (row.get("source"), row.get("governorate"), row.get("latitude"), row.get("longitude"))
+                if memo_key not in governorate_memo:
+                    governorate_memo[memo_key] = effective_governorate(row)
+                resolved_governorates.append(governorate_memo[memo_key])
+            governorates = sorted(set(resolved_governorates))
+            metrics = sorted({
+                (row["metric"], row.get("unit") or "")
+                for row in rows if row.get("metric")
+            })
+            date_values = sorted({
+                row["window_date"].date() if isinstance(row["window_date"], datetime)
+                else date.fromisoformat(row["window_date"]) if isinstance(row["window_date"], str)
+                else row["window_date"]
+                for row in rows if row.get("window_date") is not None
+            })
+            date_rows = sorted({
+                date_attributes(value) for value in date_values
+            })
 
-        source_keys = dict(conn.execute(
-            "SELECT source_name, source_key FROM dim_source"
-        ).fetchall())
-        governorate_keys = dict(conn.execute(
-            "SELECT governorate_name, governorate_key FROM dim_governorate"
-        ).fetchall())
-        metric_keys = {
-            (name, unit): key
-            for name, unit, key in conn.execute(
-                "SELECT metric_name, unit, metric_key FROM dim_metric"
-            ).fetchall()
-        }
-        date_keys = dict(conn.execute(
-            "SELECT date_value, date_key FROM dim_date"
-        ).fetchall())
+            execute_many(conn,
+                """
+                INSERT INTO dim_source (source_name) VALUES (%s)
+                ON CONFLICT (source_name) DO NOTHING
+                """,
+                [(value,) for value in sources],
+            )
+            execute_many(conn,
+                """
+                INSERT INTO dim_governorate (governorate_name) VALUES (%s)
+                ON CONFLICT (governorate_name) DO NOTHING
+                """,
+                [(value,) for value in governorates],
+            )
+            execute_many(conn,
+                """
+                INSERT INTO dim_metric (metric_name, unit) VALUES (%s, %s)
+                ON CONFLICT (metric_name, unit) DO NOTHING
+                """,
+                metrics,
+            )
+            execute_many(conn,
+                """
+                INSERT INTO dim_date (
+                    date_key, date_value, year, quarter, month, day, day_of_week
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (date_key) DO NOTHING
+                """,
+                date_rows,
+            )
 
-        fact_rows = []
-        for row, resolved_governorate in zip(rows, resolved_governorates):
-            source = row.get("source")
-            metric = row.get("metric")
-            if not source or not metric:
-                raise ValueError(
-                    f"Gold batch {batch_id} contains a row without source/metric."
-                )
+            source_keys = dict(conn.execute(
+                "SELECT source_name, source_key FROM dim_source WHERE source_name = ANY(%s)",
+                (sources,),
+            ).fetchall())
+            governorate_keys = dict(conn.execute(
+                "SELECT governorate_name, governorate_key FROM dim_governorate WHERE governorate_name = ANY(%s)",
+                (governorates,),
+            ).fetchall())
+            metric_names = sorted({name for name, _ in metrics})
+            metric_keys = {
+                (name, unit): key
+                for name, unit, key in conn.execute(
+                    "SELECT metric_name, unit, metric_key FROM dim_metric WHERE metric_name = ANY(%s)",
+                    (metric_names,),
+                ).fetchall()
+            }
+            date_keys = dict(conn.execute(
+                "SELECT date_value, date_key FROM dim_date WHERE date_value = ANY(%s)",
+                (date_values,),
+            ).fetchall())
 
-            governorate = resolved_governorate
-            unit = row.get("unit") or ""
-            date_value = row["window_date"]
-            if isinstance(date_value, datetime):
-                date_value = date_value.date()
-            elif isinstance(date_value, str):
-                date_value = date.fromisoformat(date_value)
+            fact_rows = []
+            for row, governorate in zip(rows, resolved_governorates):
+                source = row.get("source")
+                metric = row.get("metric")
+                if not source or not metric:
+                    raise ValueError(
+                        f"Gold batch {batch_id} contains a row without source/metric."
+                    )
+                unit = row.get("unit") or ""
+                date_value = row["window_date"]
+                if isinstance(date_value, datetime):
+                    date_value = date_value.date()
+                elif isinstance(date_value, str):
+                    date_value = date.fromisoformat(date_value)
 
-            count = int(row["measurement_count"])
-            if count <= 0:
-                raise ValueError(
-                    f"Gold batch {batch_id} contains a non-positive measurement_count."
-                )
+                measurement_count = int(row["measurement_count"])
+                if measurement_count <= 0:
+                    raise ValueError(
+                        f"Gold batch {batch_id} contains a non-positive measurement_count."
+                    )
+                latitude = row.get("latitude")
+                longitude = row.get("longitude")
+                fact_rows.append((
+                    as_utc(row["window_start"]),
+                    as_utc(row["window_end"]),
+                    date_keys[date_value],
+                    source_keys[source],
+                    governorate_keys[governorate],
+                    metric_keys[(metric, unit)],
+                    float(row["average_value"]),
+                    float(row["minimum_value"]),
+                    float(row["maximum_value"]),
+                    measurement_count,
+                    float(latitude) if latitude is not None else None,
+                    float(longitude) if longitude is not None else None,
+                    int(row["latitude_count"]) if row.get("latitude_count") is not None else (measurement_count if latitude is not None else 0),
+                    int(row["longitude_count"]) if row.get("longitude_count") is not None else (measurement_count if longitude is not None else 0),
+                ))
 
-            latitude = row.get("latitude")
-            longitude = row.get("longitude")
-            fact_rows.append((
-                as_utc(row["window_start"]),
-                as_utc(row["window_end"]),
-                date_keys[date_value],
-                source_keys[source],
-                governorate_keys[governorate],
-                metric_keys[(metric, unit)],
-                float(row["average_value"]),
-                float(row["minimum_value"]),
-                float(row["maximum_value"]),
-                count,
-                float(latitude) if latitude is not None else None,
-                float(longitude) if longitude is not None else None,
-                int(row["latitude_count"]) if row.get("latitude_count") is not None else (count if latitude is not None else 0),
-                int(row["longitude_count"]) if row.get("longitude_count") is not None else (count if longitude is not None else 0),
-            ))
+            execute_many(conn, FACT_UPSERT, fact_rows)
+            loaded_rows += len(fact_rows)
 
-        execute_many(conn,FACT_UPSERT, fact_rows)
-        logger.info(
-            "Loaded Gold batch into PostgreSQL | batch=%s | rows=%s",
-            batch_id,
-            len(fact_rows),
-        )
+        if loaded_rows != row_count:
+            raise RuntimeError(
+                f"Gold batch {batch_id} row-count mismatch: scanned={row_count}, loaded={loaded_rows}."
+            )
+
+    logger.info(
+        "Loaded Gold batch into PostgreSQL | batch=%s | rows=%s | arrow_batch_size=%s",
+        batch_id, loaded_rows, batch_size,
+    )
 
 
 def run():

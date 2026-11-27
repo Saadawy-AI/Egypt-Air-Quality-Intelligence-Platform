@@ -1,5 +1,4 @@
 from pathlib import Path
-import hashlib
 from r2_backup import client_and_bucket, sha256_file
 
 KEY = "egypt-air-quality/backups/2026-11-24/airquality.dump"

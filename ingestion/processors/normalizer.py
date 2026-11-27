@@ -1,4 +1,3 @@
-from datetime import datetime, timezone
 from ingestion.config.governorates import GOVERNORATES
 from ingestion.processors.schema import create_record
 

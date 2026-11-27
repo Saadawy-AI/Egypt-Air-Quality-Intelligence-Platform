@@ -1,0 +1,6 @@
+target-version = "py311"
+extend-exclude = [".venv", "data", "backups", "archive", "diagnostics", "airflow/logs"]
+
+[lint]
+# Real-bug classes only: syntax errors (E9) and pyflakes (undefined names, unused imports/variables).
+select = ["E9", "F"]

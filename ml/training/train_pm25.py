@@ -29,7 +29,7 @@ FEATURE_COLUMNS = [
     *(f"lag_{lag}" for lag in LAGS),
     "rolling_mean_24", "rolling_std_24", "rolling_mean_168",
     "hour_sin", "hour_cos", "weekday_sin", "weekday_cos",
-    "month_sin", "month_cos", "series_code",
+    "month_sin", "month_cos",
 ]
 
 
@@ -72,8 +72,10 @@ def load_measurements():
     )
 
 
-def build_series_features(series_frame, series_code):
+def build_series_features(series_frame, series_code=None):
     """Create lags/rolling statistics using only observations before target time."""
+    # series_code is accepted for backward compatibility but intentionally not
+    # used as a numeric feature: governorate IDs are nominal, not ordinal.
     series_frame = series_frame.sort_values("window_start").drop_duplicates(
         "window_start", keep="last"
     ).set_index("window_start")
@@ -102,7 +104,6 @@ def build_series_features(series_frame, series_code):
     features["weekday_cos"] = np.cos(2 * np.pi * weekday / 7)
     features["month_sin"] = np.sin(2 * np.pi * month / 12)
     features["month_cos"] = np.cos(2 * np.pi * month / 12)
-    features["series_code"] = float(series_code)
 
     result = features.copy()
     result["target"] = target
@@ -118,10 +119,8 @@ def build_series_features(series_frame, series_code):
 def build_feature_frame(measurements):
     names = sorted(measurements["governorate"].unique())
     frames = [
-        build_series_features(
-            measurements[measurements["governorate"] == name], code
-        )
-        for code, name in enumerate(names)
+        build_series_features(measurements[measurements["governorate"] == name])
+        for name in names
     ]
     frames = [frame for frame in frames if not frame.empty]
     if not frames:
@@ -132,15 +131,28 @@ def build_feature_frame(measurements):
 
 
 def chronological_split(frame, train_fraction=0.8):
-    ordered = frame.sort_values("window_start").reset_index(drop=True)
-    split = int(len(ordered) * train_fraction)
-    if split < 100 or len(ordered) - split < 30:
-        raise RuntimeError("Not enough rows for chronological train/test evaluation.")
-    cutoff = ordered.loc[split, "window_start"]
+    if not 0.5 <= train_fraction < 1.0:
+        raise ValueError("train_fraction must be between 0.5 and 1.0.")
+    ordered = frame.sort_values(["window_start", "series"]).reset_index(drop=True)
+    # Choose the cutoff from unique timestamps, not row count, so governorates
+    # with denser histories cannot dominate the temporal boundary.
+    timestamps = ordered["window_start"].drop_duplicates().sort_values().reset_index(drop=True)
+    split = int(len(timestamps) * train_fraction)
+    if split < 1 or len(timestamps) - split < 1:
+        raise RuntimeError("Not enough unique timestamps for chronological evaluation.")
+    cutoff = timestamps.iloc[split]
     train = ordered[ordered["window_start"] < cutoff].copy()
     test = ordered[ordered["window_start"] >= cutoff].copy()
-    if train.empty or test.empty:
-        raise RuntimeError("Chronological split produced an empty train or test set.")
+    if len(train) < 100 or len(test) < 30:
+        raise RuntimeError("Not enough rows for chronological train/test evaluation.")
+    train_series = set(train["series"].unique())
+    test_series = set(test["series"].unique())
+    missing = sorted(set(ordered["series"].unique()) - train_series.intersection(test_series))
+    if missing:
+        raise RuntimeError(
+            "Every evaluated governorate must have observations on both sides of "
+            f"the chronological cutoff; insufficient series: {missing}"
+        )
     return train, test
 
 
@@ -202,7 +214,7 @@ def main():
         "model_class": "HistGradientBoostingRegressor",
         "target": "actual OpenAQ hourly PM2.5 average (µg/m³)",
         "source_filter": "source_name='openaq' AND metric_name='pm25' AND governorate_name<>'Unknown'",
-        "geographic_scope": "Known governorates only; current historical coverage is Cairo.",
+        "geographic_scope": {"governorates_in_training": evaluation["series"], "coverage_note": "Evaluation is limited to the listed governorates; no nationwide performance claim."},
         "unknown_governorate_rows_excluded": True,
         "forecast_rows_excluded": True,
         "prediction_horizon": "one-hour-ahead rolling evaluation",

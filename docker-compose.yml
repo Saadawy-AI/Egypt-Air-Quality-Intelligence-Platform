@@ -1,5 +1,4 @@
 name: egypt-air-quality
-
 x-airflow-common: &airflow-common
   image: egypt-air-quality-airflow:local
   build:
@@ -17,14 +16,24 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-api-server:8080/execution/"
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     AIRFLOW__API__WORKERS: "1"
-    AIRFLOW__CORE__PARALLELISM: "4"
+    AIRFLOW__CORE__PARALLELISM: "2"
     AIRFLOW__SCHEDULER__PARSING_PROCESSES: "1"
     AIRFLOW__FAB__SESSION_BACKEND: securecookie
     _PIP_ADDITIONAL_REQUIREMENTS: ""
     PYTHONPATH: /opt/airflow
     BRONZE_BASE_PATH: /opt/project-data/bronze
+    GOLD_DLQ_PATH: /opt/project-data/gold/dead_letter
     OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}
     KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    KAFKA_SASL_USERNAME: airquality
+    KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:?Set KAFKA_SASL_PASSWORD in the ignored .env file}
+    KAFKA_TLS_STORE_PASSWORD: ${KAFKA_TLS_STORE_PASSWORD:?Set KAFKA_TLS_STORE_PASSWORD in the ignored .env file}
+    KAFKA_SSL_CA_LOCATION: /etc/kafka/secrets/kafka.crt
+    KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.truststore.p12
+    MQTT_HOST: mqtt
+    MQTT_PORT: "1883"
+    MQTT_USERNAME: ${MQTT_USERNAME:?Set MQTT_USERNAME in the ignored .env file}
+    MQTT_PASSWORD: ${MQTT_PASSWORD:?Set MQTT_PASSWORD in the ignored .env file}
     PGHOST: 172.29.0.10
     PGPORT: "5432"
     AIRFLOW_DB_PASSWORD: ${AIRFLOW_DB_PASSWORD}
@@ -43,16 +52,15 @@ x-airflow-common: &airflow-common
     CONTROL_API_URL: http://source-control-api:8088
     CONTROL_API_TOKEN: ${CONTROL_API_TOKEN:?Set CONTROL_API_TOKEN in the ignored .env file}
   volumes:
-    - ./airflow/dags:/opt/airflow/dags
     - ./airflow/logs:/opt/airflow/logs
-    - ./airflow/plugins:/opt/airflow/plugins
-    - ./data:/opt/project-data
+    - project_data:/opt/project-data
     - ./ml/models:/opt/project-models:ro
     - ml_candidates:/opt/model-candidates
-    - ./ingestion:/opt/airflow/ingestion:ro
-    - ./scripts:/opt/airflow/scripts:ro
+    # Ingestion is baked into the Airflow image; avoid Windows/WSL bind-mount import scans.
     - ./backups:/opt/airflow/backups
+    - ./data/kafka-certs:/etc/kafka/secrets:ro
   user: "${AIRFLOW_UID:-50000}:0"
+  mem_limit: 1g
   group_add:
     - "185"
   depends_on:
@@ -62,7 +70,6 @@ x-airflow-common: &airflow-common
     default: {}
     postgres-private: {}
     control-plane: {}
-
 services:
   postgres:
     image: postgres:16
@@ -76,6 +83,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    mem_limit: 1g
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -86,7 +94,6 @@ services:
       default: {}
       postgres-private:
         ipv4_address: 172.29.0.10
-
   postgres-loader:
     build:
       context: .
@@ -101,9 +108,10 @@ services:
       PGPASSWORD: ${APP_DB_PASSWORD}
       GOLD_DATA_DIR: /opt/project-data/gold/hourly_measurements_v4
       POSTGRES_SCHEMA_PATH: /app/schema.sql
+      GOLD_LOADER_BATCH_SIZE: ${GOLD_LOADER_BATCH_SIZE:-4096}
       POLL_SECONDS: "60"
     volumes:
-      - ./data:/opt/project-data:ro
+      - project_data:/opt/project-data:ro
       - ./postgres/loaders/gold_loader.py:/app/gold_loader.py:ro
       - ./postgres/schemas/schema.sql:/app/schema.sql:ro
     depends_on:
@@ -115,7 +123,6 @@ services:
     networks:
       default: {}
       postgres-private: {}
-
   ml-trainer:
     profiles: ["ml"]
     build:
@@ -131,14 +138,13 @@ services:
     volumes:
       - ./ml/models:/opt/project-models
       - ./ml:/app/ml:ro
-      - ./data:/opt/project-data:ro
+      - project_data:/opt/project-data:ro
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       default: {}
       postgres-private: {}
-
   anomaly-detector:
     build:
       context: .
@@ -165,7 +171,33 @@ services:
     networks:
       default: {}
       postgres-private: {}
-
+  kafka-certs-init:
+    image: apache/kafka:4.1.0
+    user: "0:0"
+    environment:
+      KAFKA_TLS_STORE_PASSWORD: ${KAFKA_TLS_STORE_PASSWORD:?Set KAFKA_TLS_STORE_PASSWORD in the ignored .env file}
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        mkdir -p /certs
+        if [ ! -s /certs/kafka.keystore.p12 ] || [ ! -s /certs/kafka.truststore.p12 ] || [ ! -s /certs/kafka.crt ]; then
+          rm -f /certs/kafka.keystore.p12 /certs/kafka.truststore.p12 /certs/kafka.crt
+          keytool -genkeypair -noprompt -alias kafka -keyalg RSA -keysize 2048 -validity 825 \
+            -storetype PKCS12 -keystore /certs/kafka.keystore.p12 \
+            -storepass "$${KAFKA_TLS_STORE_PASSWORD}" -keypass "$${KAFKA_TLS_STORE_PASSWORD}" \
+            -dname "CN=kafka" -ext "SAN=dns:kafka,dns:localhost,ip:127.0.0.1"
+          keytool -exportcert -rfc -alias kafka -keystore /certs/kafka.keystore.p12 \
+            -storepass "$${KAFKA_TLS_STORE_PASSWORD}" -file /certs/kafka.crt
+          keytool -importcert -noprompt -alias kafka -file /certs/kafka.crt \
+            -keystore /certs/kafka.truststore.p12 -storetype PKCS12 \
+            -storepass "$${KAFKA_TLS_STORE_PASSWORD}"
+        fi
+        chown 1000:1000 /certs/kafka.keystore.p12
+        chmod 0640 /certs/kafka.keystore.p12
+        chmod 0644 /certs/kafka.truststore.p12 /certs/kafka.crt
+    volumes:
+      - ./data/kafka-certs:/certs
+    restart: "no"
   kafka:
     image: apache/kafka:4.1.0
     hostname: kafka
@@ -174,12 +206,16 @@ services:
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:29093,HOST://:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,HOST://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:29093,HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:SASL_SSL,HOST:SASL_SSL
+      KAFKA_SASL_ENABLED_MECHANISMS: PLAIN
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+      KAFKA_LISTENER_NAME_INTERNAL_PLAIN_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="airquality" password="${KAFKA_SASL_PASSWORD}" user_airquality="${KAFKA_SASL_PASSWORD}";'
+      KAFKA_LISTENER_NAME_HOST_PLAIN_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="airquality" password="${KAFKA_SASL_PASSWORD}" user_airquality="${KAFKA_SASL_PASSWORD}";'
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
@@ -187,26 +223,55 @@ services:
       KAFKA_NUM_PARTITIONS: 3
       KAFKA_LOG_DIRS: /var/lib/kafka/data
       KAFKA_METADATA_LOG_DIR: /var/lib/kafka/data
+      KAFKA_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.keystore.p12
+      KAFKA_SSL_KEYSTORE_PASSWORD: ${KAFKA_TLS_STORE_PASSWORD}
+      KAFKA_SSL_KEY_PASSWORD: ${KAFKA_TLS_STORE_PASSWORD}
+      KAFKA_SSL_KEYSTORE_TYPE: PKCS12
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.truststore.p12
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: ${KAFKA_TLS_STORE_PASSWORD}
+      KAFKA_SSL_TRUSTSTORE_TYPE: PKCS12
+    depends_on:
+      kafka-certs-init:
+        condition: service_completed_successfully
     volumes:
       - kafka_data:/var/lib/kafka/data
+      - ./data/kafka-certs:/etc/kafka/secrets:ro
+    mem_limit: 1536m
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "bash -ec 'echo > /dev/tcp/localhost/9092'"]
       interval: 15s
       timeout: 10s
       retries: 10
     restart: unless-stopped
-
   kafka-init:
     image: apache/kafka:4.1.0
+    environment:
+      KAFKA_SASL_USERNAME: airquality
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:?Set KAFKA_SASL_PASSWORD in the ignored .env file}
+      KAFKA_TLS_STORE_PASSWORD: ${KAFKA_TLS_STORE_PASSWORD:?Set KAFKA_TLS_STORE_PASSWORD in the ignored .env file}
+      KAFKA_SSL_CA_LOCATION: /etc/kafka/secrets/kafka.crt
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.truststore.p12
     depends_on:
       kafka:
         condition: service_healthy
+    volumes:
+      - ./data/kafka-certs:/etc/kafka/secrets:ro
     entrypoint: ["/bin/bash", "-ec"]
     command:
       - |
+        cat > /tmp/kafka-client.properties <<EOF
+        security.protocol=SASL_SSL
+        ssl.truststore.location=/etc/kafka/secrets/kafka.truststore.p12
+        ssl.truststore.password=$${KAFKA_TLS_STORE_PASSWORD}
+        ssl.truststore.type=PKCS12
+        ssl.endpoint.identification.algorithm=https
+        sasl.mechanism=PLAIN
+        sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="$$KAFKA_SASL_USERNAME" password="$$KAFKA_SASL_PASSWORD";
+        EOF
         for topic in air-quality weather openaq-measurements silver-batch-notifications; do
           /opt/kafka/bin/kafka-topics.sh \
             --bootstrap-server kafka:29092 \
+            --command-config /tmp/kafka-client.properties \
             --create --if-not-exists \
             --topic "$$topic" \
             --partitions 3 \
@@ -214,11 +279,11 @@ services:
         done
         /opt/kafka/bin/kafka-configs.sh \
           --bootstrap-server kafka:29092 \
+          --command-config /tmp/kafka-client.properties \
           --entity-type topics \
           --entity-name silver-batch-notifications \
           --alter --add-config retention.ms=2592000000
     restart: "no"
-
   ingestion:
     profiles: ["bootstrap"]
     build:
@@ -227,21 +292,40 @@ services:
     environment:
       OPENAQ_API_KEY: ${OPENAQ_API_KEY:-}
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_SASL_USERNAME: airquality
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:?Set KAFKA_SASL_PASSWORD in the ignored .env file}
+      KAFKA_TLS_STORE_PASSWORD: ${KAFKA_TLS_STORE_PASSWORD:?Set KAFKA_TLS_STORE_PASSWORD in the ignored .env file}
+      KAFKA_SSL_CA_LOCATION: /etc/kafka/secrets/kafka.crt
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.truststore.p12
+    volumes:
+      - ./data/kafka-certs:/etc/kafka/secrets:ro
     depends_on:
       kafka-init:
         condition: service_completed_successfully
     restart: "no"
-
   mqtt:
     image: eclipse-mosquitto:2
+    user: "0:0"
     ports:
       - "127.0.0.1:1883:1883"
+    environment:
+      MQTT_USERNAME: ${MQTT_USERNAME:?Set MQTT_USERNAME in the ignored .env file}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?Set MQTT_PASSWORD in the ignored .env file}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        : "$${MQTT_USERNAME:?MQTT_USERNAME is required}"
+        : "$${MQTT_PASSWORD:?MQTT_PASSWORD is required}"
+        rm -f /mosquitto/data/passwordfile
+        mosquitto_passwd -b -c /mosquitto/data/passwordfile "$${MQTT_USERNAME}" "$${MQTT_PASSWORD}"
+        chown mosquitto:mosquitto /mosquitto/data/passwordfile
+        chmod 0700 /mosquitto/data/passwordfile
+        exec mosquitto -c /mosquitto/config/mosquitto.conf
     volumes:
       - ./infra/docker/mosquitto/config:/mosquitto/config:ro
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
     restart: unless-stopped
-
   mqtt-kafka-bridge:
     build:
       context: .
@@ -269,12 +353,21 @@ services:
         exec python -m ingestion.mqtt.subscriber
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_SASL_USERNAME: airquality
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:?Set KAFKA_SASL_PASSWORD in the ignored .env file}
+      KAFKA_TLS_STORE_PASSWORD: ${KAFKA_TLS_STORE_PASSWORD:?Set KAFKA_TLS_STORE_PASSWORD in the ignored .env file}
+      KAFKA_SSL_CA_LOCATION: /etc/kafka/secrets/kafka.crt
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.truststore.p12
       KAFKA_SENSOR_TOPIC: air-quality
       MQTT_HOST: mqtt
       MQTT_PORT: "1883"
+      MQTT_USERNAME: ${MQTT_USERNAME:?Set MQTT_USERNAME in the ignored .env file}
       MQTT_TOPIC_FILTER: egypt/air-quality/#
       MQTT_CLIENT_ID: egypt-air-quality-kafka-bridge
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?Set MQTT_PASSWORD in the ignored .env file}
       MQTT_PUBLISH_QUEUE_SIZE: ${MQTT_PUBLISH_QUEUE_SIZE:-500}
+    volumes:
+      - ./data/kafka-certs:/etc/kafka/secrets:ro
     depends_on:
       kafka:
         condition: service_healthy
@@ -283,7 +376,6 @@ services:
       mqtt:
         condition: service_started
     restart: unless-stopped
-
   # Opt-in virtual IoT fleet. All records are labeled iot_sensor_simulator.
   # Start explicitly with: docker compose --profile iot-simulator run --rm iot-simulator python -m ingestion.iot.simulator.simulator --once
   iot-simulator:
@@ -295,6 +387,8 @@ services:
     environment:
       MQTT_HOST: mqtt
       MQTT_PORT: "1883"
+      MQTT_USERNAME: ${MQTT_USERNAME:?Set MQTT_USERNAME in the ignored .env file}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?Set MQTT_PASSWORD in the ignored .env file}
       MQTT_SIMULATOR_TOPIC_PREFIX: egypt/air-quality/simulated
       IOT_SIMULATOR_INTERVAL_SECONDS: ${IOT_SIMULATOR_INTERVAL_SECONDS:-30}
       IOT_SIMULATOR_DEVICE_COUNT: ${IOT_SIMULATOR_DEVICE_COUNT:-3}
@@ -303,7 +397,6 @@ services:
       mqtt:
         condition: service_started
     restart: "no"
-
   # Optional Wokwi ESP32 ingress; independent lifecycle from the core MQTT/Kafka bridge.
   wokwi-mqtt-bridge:
     profiles: ["wokwi"]
@@ -314,6 +407,8 @@ services:
     environment:
       MQTT_HOST: mqtt
       MQTT_PORT: "1883"
+      MQTT_USERNAME: ${MQTT_USERNAME:?Set MQTT_USERNAME in the ignored .env file}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?Set MQTT_PASSWORD in the ignored .env file}
       WOKWI_MQTT_HOST: ${WOKWI_MQTT_HOST:-broker.hivemq.com}
       WOKWI_MQTT_PORT: ${WOKWI_MQTT_PORT:-1883}
       WOKWI_TOPIC_PREFIX: ${WOKWI_TOPIC_PREFIX:?Set WOKWI_TOPIC_PREFIX in the ignored .env}
@@ -325,25 +420,29 @@ services:
       mqtt:
         condition: service_started
     restart: "no"
-
   spark-master:
-    image: apache/spark:3.5.7
+    image: egypt-air-quality-spark:local
+    build:
+      context: .
+      dockerfile: infra/docker/spark.Dockerfile
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master", "--host", "spark-master", "--port", "7077", "--webui-port", "8080"]
     ports:
       - "127.0.0.1:8083:8080"
       - "127.0.0.1:7077:7077"
     volumes:
-      - ./data:/opt/project-data
-      - ./spark:/opt/spark-apps:ro
+      - project_data:/opt/project-data
+      - ./data/kafka-certs:/etc/kafka/secrets:ro
     healthcheck:
       test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/spark-master/7077'"]
       interval: 10s
       timeout: 5s
       retries: 12
     restart: unless-stopped
-
   spark-worker:
-    image: apache/spark:3.5.7
+    image: egypt-air-quality-spark:local
+    build:
+      context: .
+      dockerfile: infra/docker/spark.Dockerfile
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077", "--webui-port", "8081"]
     depends_on:
       spark-master:
@@ -351,23 +450,26 @@ services:
     environment:
       SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2048m}
       SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-3}
+    mem_limit: 3g
     ports:
       - "127.0.0.1:8081:8081"
     volumes:
-      - ./data:/opt/project-data
-      - ./spark:/opt/spark-apps:ro
+      - project_data:/opt/project-data
+      - ./data/kafka-certs:/etc/kafka/secrets:ro
     healthcheck:
-      # Do not register executors unless the Windows bind mount exposes the
-      # existing project datasets and checkpoints; an empty stale mount makes
+      # Do not register executors unless the Linux named volume exposes the
+      # existing project datasets and checkpoints; an empty data volume makes
       # Spark tasks fail while writing Bronze/Silver/Gold outputs.
       test: ["CMD-SHELL", "test -d /opt/project-data/bronze && test -d /opt/project-data/silver && test -d /opt/project-data/gold && test -d /opt/project-data/checkpoints && bash -c 'echo > /dev/tcp/127.0.0.1/8081'"]
       interval: 10s
       timeout: 5s
       retries: 12
     restart: unless-stopped
-
   spark-bronze:
-    image: apache/spark:3.5.7
+    image: egypt-air-quality-spark:local
+    build:
+      context: .
+      dockerfile: infra/docker/spark.Dockerfile
     command:
       - /bin/bash
       - -ec
@@ -410,14 +512,29 @@ services:
         condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_SASL_USERNAME: airquality
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:?Set KAFKA_SASL_PASSWORD in the ignored .env file}
+      KAFKA_TLS_STORE_PASSWORD: ${KAFKA_TLS_STORE_PASSWORD:?Set KAFKA_TLS_STORE_PASSWORD in the ignored .env file}
+      KAFKA_SSL_CA_LOCATION: /etc/kafka/secrets/kafka.crt
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.truststore.p12
       MAX_OFFSETS_PER_TRIGGER: ${MAX_OFFSETS_PER_TRIGGER:-500}
+    # Liveness: the Spark driver UI only answers while the streaming driver is alive.
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/4040'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 240s
+    mem_limit: 1280m
     volumes:
-      - ./data:/opt/project-data
-      - ./spark:/opt/spark-apps:ro
+      - project_data:/opt/project-data
+      - ./data/kafka-certs:/etc/kafka/secrets:ro
     restart: on-failure
-
   spark-silver:
-    image: apache/spark:3.5.7
+    image: egypt-air-quality-spark:local
+    build:
+      context: .
+      dockerfile: infra/docker/spark.Dockerfile
     command:
       - /opt/spark/bin/spark-submit
       - --master
@@ -446,13 +563,28 @@ services:
         condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_SASL_USERNAME: airquality
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:?Set KAFKA_SASL_PASSWORD in the ignored .env file}
+      KAFKA_TLS_STORE_PASSWORD: ${KAFKA_TLS_STORE_PASSWORD:?Set KAFKA_TLS_STORE_PASSWORD in the ignored .env file}
+      KAFKA_SSL_CA_LOCATION: /etc/kafka/secrets/kafka.crt
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.truststore.p12
+      SILVER_WATERMARK_DELAY: ${SILVER_WATERMARK_DELAY:-48 hours}
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/4040'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 240s
+    mem_limit: 1280m
     volumes:
-      - ./data:/opt/project-data
-      - ./spark:/opt/spark-apps:ro
+      - project_data:/opt/project-data
+      - ./data/kafka-certs:/etc/kafka/secrets:ro
     restart: on-failure
-
   spark-gold:
-    image: apache/spark:3.5.7
+    image: egypt-air-quality-spark:local
+    build:
+      context: .
+      dockerfile: infra/docker/spark.Dockerfile
     command:
       - /opt/spark/bin/spark-submit
       - --master
@@ -474,16 +606,28 @@ services:
       - /opt/spark-apps/gold/aggregation.py
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_SASL_USERNAME: airquality
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:?Set KAFKA_SASL_PASSWORD in the ignored .env file}
+      KAFKA_TLS_STORE_PASSWORD: ${KAFKA_TLS_STORE_PASSWORD:?Set KAFKA_TLS_STORE_PASSWORD in the ignored .env file}
+      KAFKA_SSL_CA_LOCATION: /etc/kafka/secrets/kafka.crt
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.truststore.p12
+      GOLD_DLQ_PATH: /opt/project-data/gold/dead_letter
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/4040'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 240s
+    mem_limit: 1280m
     depends_on:
       spark-silver:
         condition: service_started
       spark-worker:
         condition: service_healthy
     volumes:
-      - ./data:/opt/project-data
-      - ./spark:/opt/spark-apps:ro
+      - project_data:/opt/project-data
+      - ./data/kafka-certs:/etc/kafka/secrets:ro
     restart: on-failure
-
   model-volume-init:
     image: egypt-air-quality-airflow:local
     user: "0:0"
@@ -496,7 +640,6 @@ services:
         chown -R 50000:0 /opt/model-candidates
         chmod 2775 /opt/model-candidates
     restart: "no"
-
   airflow-init:
     <<: *airflow-common
     depends_on:
@@ -520,7 +663,6 @@ services:
             --email admin@example.com
         fi
     restart: "no"
-
   airflow-api-server:
     <<: *airflow-common
     command: api-server
@@ -530,15 +672,14 @@ services:
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped
-
   airflow-scheduler:
     <<: *airflow-common
     command: scheduler
+    mem_limit: 1536m
     depends_on:
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped
-
   airflow-dag-processor:
     <<: *airflow-common
     command: dag-processor
@@ -546,7 +687,6 @@ services:
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped
-
   airflow-triggerer:
     <<: *airflow-common
     command: triggerer
@@ -554,12 +694,14 @@ services:
       airflow-init:
         condition: service_completed_successfully
     restart: unless-stopped
-
   # Filtered Docker API access for the narrowly allowlisted source controller.
   docker-socket-proxy:
     image: tecnativa/docker-socket-proxy:0.3.0
     environment:
       CONTAINERS: "1"
+      # POST is required: source-control-api starts/stops allowlisted containers.
+      # The proxy filters by API group only (not path), so keep this service on
+      # the internal socket-control network and EXEC/IMAGES/VOLUMES/NETWORKS off.
       POST: "1"
       PING: "1"
       VERSION: "1"
@@ -568,12 +710,12 @@ services:
     networks:
       - socket-control
     restart: unless-stopped
-
   source-control-api:
     build:
       context: ./control_api
     environment:
       CONTROL_API_TOKEN: ${CONTROL_API_TOKEN:?Set CONTROL_API_TOKEN in the ignored .env file}
+      CONTROL_API_PORT: ${CONTROL_API_PORT:-8088}
       DOCKER_API_URL: http://docker-socket-proxy:2375
       COMPOSE_PROJECT_NAME: egypt-air-quality
       WOKWI_TOPIC_PREFIX: ${WOKWI_TOPIC_PREFIX:?Set WOKWI_TOPIC_PREFIX in the ignored .env}
@@ -584,7 +726,6 @@ services:
       - control-plane
       - socket-control
     restart: unless-stopped
-
   streamlit:
     build:
       context: .
@@ -600,13 +741,13 @@ services:
       PGUSER: airquality
       PGPASSWORD: ${APP_DB_PASSWORD}
       ML_METADATA_PATH: /opt/project-models/pm25/pm25_hgb_v2.json
-      CONTROL_API_URL: http://source-control-api:8088
+      CONTROL_API_URL: http://source-control-api:${CONTROL_API_PORT:-8088}
       CONTROL_API_TOKEN: ${CONTROL_API_TOKEN:?Set CONTROL_API_TOKEN in the ignored .env file}
       AIRFLOW_API_URL: http://airflow-api-server:8080/api/v2
       AIRFLOW_API_USER: ${AIRFLOW_ADMIN_USER:-admin}
       AIRFLOW_API_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
     volumes:
-      - ./data:/opt/project-data:ro
+      - project_data:/opt/project-data:ro
       - ./ml/models:/opt/project-models:ro
     depends_on:
       postgres:
@@ -618,14 +759,15 @@ services:
       default: {}
       postgres-private: {}
       control-plane: {}
-
 volumes:
   postgres_data:
   kafka_data:
   mosquitto_data:
   mosquitto_log:
   ml_candidates:
-
+  project_data:
+    external: true
+    name: egypt-air-quality_project_data
 networks:
   control-plane:
     internal: true

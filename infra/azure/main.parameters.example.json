@@ -2,11 +2,21 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "location": { "value": "uaenorth" },
-    "nameSuffix": { "value": "replace-me" },
-    "deployStorage": { "value": false },
-    "deployEventHubs": { "value": false },
-    "deployMonitoring": { "value": false },
+    "location": {
+      "value": "uaenorth"
+    },
+    "nameSuffix": {
+      "value": "replace-me"
+    },
+    "deployStorage": {
+      "value": false
+    },
+    "deployEventHubs": {
+      "value": false
+    },
+    "deployMonitoring": {
+      "value": false
+    },
     "tags": {
       "value": {
         "project": "Egypt-Air-Quality-Intelligence-Platform",
@@ -14,6 +24,9 @@
         "managedBy": "bicep",
         "dataClassification": "telemetry"
       }
+    },
+    "allowPublicNetworkAccess": {
+      "value": false
     }
   }
 }

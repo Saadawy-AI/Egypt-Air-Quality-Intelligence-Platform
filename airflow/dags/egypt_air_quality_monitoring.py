@@ -2,44 +2,17 @@
 import json
 import os
 import threading
+import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-import psycopg
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
+from platform_common import db, send_failure_alert
 import paho.mqtt.client as mqtt
+from ingestion.config.kafka_security import kafka_python_security_config
 
 
-def send_failure_alert(context):
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
-        print("Airflow alert skipped: Telegram credentials are not configured.")
-        return
-    ti = context.get("task_instance")
-    dag_id = context.get("dag").dag_id if context.get("dag") else "unknown"
-    task_id = ti.task_id if ti else "unknown"
-    payload = json.dumps({
-        "chat_id": chat_id,
-        "text": f"Airflow task failed\\nDAG: {dag_id}\\nTask: {task_id}\\nRun: {context.get('run_id', 'unknown')}",
-    }).encode()
-    request = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data=payload, headers={"Content-Type": "application/json"},
-    )
-    try:
-        urllib.request.urlopen(request, timeout=10).read()
-    except Exception as exc:
-        print(f"Could not deliver Airflow failure alert: {exc}")
-
-
-def db():
-    return psycopg.connect(
-        host=os.environ["PGHOST"], port=os.getenv("PGPORT", "5432"),
-        dbname=os.environ["PGDATABASE"], user=os.environ["PGUSER"],
-        password=os.environ["PGPASSWORD"], connect_timeout=8,
-    )
 
 
 def check_mqtt_ingress():
@@ -64,6 +37,11 @@ def check_mqtt_ingress():
         client_id="airflow-iot-ingress-health",
         protocol=mqtt.MQTTv311,
     )
+    mqtt_username = os.getenv("MQTT_USERNAME")
+    mqtt_password = os.getenv("MQTT_PASSWORD")
+    if not mqtt_username or not mqtt_password:
+        raise RuntimeError("MQTT credentials are not configured for the health probe.")
+    client.username_pw_set(mqtt_username, mqtt_password)
     client.on_connect = on_connect
     client.on_message = on_message
     client.connect(os.getenv("MQTT_HOST", "mqtt"), int(os.getenv("MQTT_PORT", "1883")), keepalive=15)
@@ -88,6 +66,7 @@ def check_kafka():
     from kafka import KafkaAdminClient
     admin = KafkaAdminClient(
         bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092"),
+        **kafka_python_security_config(),
         request_timeout_ms=8000,
         client_id="airflow-platform-monitor",
     )
@@ -103,15 +82,44 @@ def check_kafka():
 
 
 def check_spark():
-    with urllib.request.urlopen("http://spark-master:8080/json/", timeout=8) as response:
-        payload = json.loads(response.read().decode("utf-8"))
-    workers = int(payload.get("aliveworkers", 0))
-    active_apps = len(payload.get("activeapps", []))
-    if workers < 1:
-        raise RuntimeError("Spark has no alive workers.")
-    if active_apps < 3:
-        raise RuntimeError(f"Expected active Bronze/Silver/Gold Spark applications; found {active_apps}.")
-    return {"spark": "healthy", "alive_workers": workers, "active_apps": active_apps}
+    required_apps = max(1, int(os.getenv("SPARK_EXPECTED_ACTIVE_APPS", "3")))
+    grace_seconds = max(0, int(os.getenv("SPARK_STARTUP_GRACE_SECONDS", "60")))
+    deadline = time.monotonic() + grace_seconds
+    workers = 0
+    active_apps = 0
+
+    while True:
+        with urllib.request.urlopen("http://spark-master:8080/json/", timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        workers = int(payload.get("aliveworkers", 0))
+        active_apps = len(payload.get("activeapps", []))
+        if workers >= 1 and active_apps >= required_apps:
+            return {"spark": "healthy", "alive_workers": workers, "active_apps": active_apps}
+        if time.monotonic() >= deadline:
+            if workers < 1:
+                raise RuntimeError("Spark has no alive workers after the startup grace period.")
+            raise RuntimeError(
+                f"Expected {required_apps} active Spark applications after {grace_seconds}s; "
+                f"found {active_apps}."
+            )
+        time.sleep(min(10, max(1, deadline - time.monotonic())))
+
+
+def check_gold_dlq():
+    dlq_path = os.getenv("GOLD_DLQ_PATH", "/opt/project-data/gold/dead_letter")
+    if not os.path.isdir(dlq_path):
+        return {"gold_dlq": "clear", "pending": 0}
+    with os.scandir(dlq_path) as entries:
+        pending = [
+            entry.name for entry in entries
+            if entry.is_file(follow_symlinks=False) and entry.name.endswith(".json")
+        ]
+    if pending:
+        raise RuntimeError(
+            f"Gold dead-letter queue contains {len(pending)} failed notifications: "
+            + ", ".join(sorted(pending)[:10])
+        )
+    return {"gold_dlq": "clear", "pending": 0}
 
 
 def check_postgres_and_freshness():
@@ -140,6 +148,7 @@ with DAG(
     start_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
     catchup=False,
     max_active_runs=1,
+    max_active_tasks=1,  # Serialize health probes to reduce concurrent Airflow RTIF writes.
     dagrun_timeout=timedelta(minutes=4),
     default_args={
         "owner": "air-quality-platform", "retries": 1,
@@ -153,4 +162,6 @@ with DAG(
     kafka = PythonOperator(task_id="check_kafka_topics", python_callable=check_kafka)
     spark = PythonOperator(task_id="check_spark_workers", python_callable=check_spark)
     postgres = PythonOperator(task_id="check_postgres_freshness", python_callable=check_postgres_and_freshness)
-    [mqtt_ingress, kafka, spark, postgres]
+    gold_dlq = PythonOperator(task_id="check_gold_dead_letter_queue", python_callable=check_gold_dlq)
+    # The five checks are independent and intentionally run in parallel
+    # (no dependency edges between mqtt_ingress, kafka, spark, postgres, gold_dlq).

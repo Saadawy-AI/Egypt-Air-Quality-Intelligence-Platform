@@ -1,8 +1,14 @@
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
+from platform_common import send_failure_alert
+
+
+log = logging.getLogger(__name__)
+
 
 
 def run_ingestion():
@@ -19,10 +25,13 @@ with DAG(
     start_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
     catchup=False,
     max_active_runs=1,
+    dagrun_timeout=timedelta(minutes=35),
     default_args={
         "owner": "air-quality-platform",
         "retries": 2,
         "retry_delay": timedelta(minutes=5),
+        "execution_timeout": timedelta(minutes=30),
+        "on_failure_callback": send_failure_alert,
     },
     tags=["ingestion", "local"],
 ) as dag:

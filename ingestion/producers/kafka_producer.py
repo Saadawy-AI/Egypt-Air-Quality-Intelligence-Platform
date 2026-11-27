@@ -4,6 +4,7 @@ from kafka import KafkaProducer
 from kafka.errors import KafkaError
 
 from ingestion.config.settings import settings
+from ingestion.config.kafka_security import kafka_python_security_config
 from ingestion.utils.logger import get_logger
 
 
@@ -22,6 +23,7 @@ class KafkaProducerClient:
         self.producer = KafkaProducer(
 
             bootstrap_servers=self.bootstrap_servers,
+            **kafka_python_security_config(),
 
             value_serializer=lambda value: json.dumps(
                 value,

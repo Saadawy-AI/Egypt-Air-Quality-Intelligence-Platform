@@ -1,4 +1,3 @@
-import pandas as pd
 import pytest
 
 from ingestion.fetch_historical_weather import HOURLY_VARIABLES, fetch_weather

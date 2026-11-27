@@ -1,5 +1,6 @@
-import os
 import logging
+import os
+import sys
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
@@ -10,6 +11,9 @@ from pyspark.sql.functions import (
 
 
 logging.basicConfig(level=logging.INFO)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from kafka_security import with_kafka_security_options
+
 logger = logging.getLogger("BronzeIngestion")
 
 
@@ -20,7 +24,7 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv(
 
 BRONZE_BASE_PATH = "/opt/project-data/bronze"
 
-CHECKPOINT_BASE_PATH = "/opt/project-data/checkpoints"
+CHECKPOINT_BASE_PATH = "/opt/project-data/checkpoints/bronze"
 
 MAX_OFFSETS_PER_TRIGGER = int(
     os.getenv("MAX_OFFSETS_PER_TRIGGER", "500")
@@ -59,8 +63,7 @@ def create_stream(spark, topic, dataset_name):
     )
 
     kafka_stream = (
-        spark.readStream
-        .format("kafka")
+        with_kafka_security_options(spark.readStream.format("kafka"))
         .option(
             "kafka.bootstrap.servers",
             KAFKA_BOOTSTRAP_SERVERS

@@ -1,5 +1,5 @@
 """Allowlisted lifecycle controller for optional IoT and streaming services."""
-import json, os, time
+import hmac, json, os, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -7,6 +7,7 @@ from urllib.request import Request, urlopen
 
 DOCKER_API=os.getenv("DOCKER_API_URL","http://docker-socket-proxy:2375")
 TOKEN=os.environ["CONTROL_API_TOKEN"]
+if len(TOKEN)<16: raise SystemExit("CONTROL_API_TOKEN must be set to a secret of at least 16 characters")
 ALLOWED={"python_iot":"iot-simulator","wokwi":"wokwi-mqtt-bridge",
          "spark_bronze":"spark-bronze","spark_silver":"spark-silver","spark_gold":"spark-gold"}
 PROJECT=os.getenv("COMPOSE_PROJECT_NAME","egypt-air-quality")
@@ -61,7 +62,10 @@ class Handler(BaseHTTPRequestHandler):
         body=json.dumps(data).encode(); self.send_response(code)
         self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(body)))
         self.end_headers(); self.wfile.write(body)
-    def auth(self): return self.headers.get("Authorization")==f"Bearer {TOKEN}"
+    def auth(self):
+        # Constant-time comparison avoids leaking the token through response timing.
+        supplied=(self.headers.get("Authorization") or "").encode()
+        return hmac.compare_digest(supplied,f"Bearer {TOKEN}".encode())
     def do_GET(self):
         if self.path=="/health": return self.reply(200,{"status":"ok"})
         if not self.auth(): return self.reply(401,{"error":"unauthorized"})
@@ -79,5 +83,6 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self,fmt,*args): print("control-api:",fmt%args,flush=True)
 
 if __name__=="__main__":
-    print("IoT source control API listening on :8088",flush=True)
-    ThreadingHTTPServer(("0.0.0.0",8088),Handler).serve_forever()
+    port = int(os.getenv("CONTROL_API_PORT", "8088"))
+    print(f"IoT source control API listening on :{port}",flush=True)
+    ThreadingHTTPServer(("0.0.0.0",port),Handler).serve_forever()

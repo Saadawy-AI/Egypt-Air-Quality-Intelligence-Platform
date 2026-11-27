@@ -311,14 +311,24 @@ def load_gold_data(path, start_date):
         return pd.DataFrame(), "Gold Parquet (unavailable)"
 
     dataset = ds.dataset(root, format="parquet", partitioning="hive")
-    table = dataset.to_table(
-        filter=ds.field("window_date") >= start_date
+    scanner = dataset.scanner(
+        columns=GOLD_COLUMNS + ["latitude_count", "longitude_count"],
+        filter=ds.field("window_date") >= start_date,
+        batch_size=25_000,
     )
-    frame = table.to_pandas()
-    if frame.empty:
-        return frame, "Gold Parquet"
+    # Aggregate each Arrow batch before retaining it. This bounds peak memory
+    # to one raw Parquet batch plus the much smaller set of hourly aggregates.
+    partial_frames = []
+    for record_batch in scanner.to_batches():
+        batch_frame = record_batch.to_pandas()
+        if not batch_frame.empty:
+            partial_frames.append(merge_gold_batches(batch_frame))
 
-    return merge_gold_batches(frame), "Gold Parquet fallback"
+    if not partial_frames:
+        return pd.DataFrame(), "Gold Parquet"
+
+    merged = merge_gold_batches(pd.concat(partial_frames, ignore_index=True))
+    return merged, "Gold Parquet fallback"
 
 
 if lookback_days <= 0:

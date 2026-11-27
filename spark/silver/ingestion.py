@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
@@ -30,7 +31,14 @@ from pyspark.sql.types import (
 
 
 logging.basicConfig(level=logging.INFO)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from kafka_security import with_kafka_security_options
+
 logger = logging.getLogger("SilverIngestion")
+
+# Spark orders NaN above every number and treats +Infinity as >= 0, so a bare
+# ``value >= 0`` accepts both. Measurements must be finite doubles.
+FINITE_DOUBLE_MAX = sys.float_info.max
 
 PROJECT_DATA = "/opt/project-data"
 BRONZE_BASE_PATH = os.path.join(PROJECT_DATA, "bronze")
@@ -46,6 +54,7 @@ DATASETS = {
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
 SILVER_NOTIFICATION_TOPIC = "silver-batch-notifications"
+WATERMARK_DELAY = os.getenv("SILVER_WATERMARK_DELAY", "48 hours")
 
 BRONZE_SCHEMA = StructType([
     StructField("kafka_key", StringType()),
@@ -111,7 +120,7 @@ def parse_bronze_records(bronze_stream):
         & col("data").getItem("unit").isNotNull()
         & (col("data").getItem("unit") != "")
         & col("data").getItem("value").cast("double").isNotNull()
-        & (col("data").getItem("value").cast("double") >= 0)
+        & col("data").getItem("value").cast("double").between(0.0, FINITE_DOUBLE_MAX)
     )
 
     meteo_values_valid = expr(
@@ -120,6 +129,8 @@ def parse_bronze_records(bronze_stream):
             map_values(data),
             value -> try_cast(value AS DOUBLE) IS NOT NULL
                 AND NOT isnan(try_cast(value AS DOUBLE))
+                AND try_cast(value AS DOUBLE)
+                    BETWEEN -1.7976931348623157E308 AND 1.7976931348623157E308
         )
         """
     )
@@ -251,7 +262,8 @@ def validation_errors():
                 OR data['pollutant'] IS NULL OR trim(data['pollutant']) = ''
                 OR data['unit'] IS NULL OR trim(data['unit']) = ''
                 OR try_cast(data['value'] AS DOUBLE) IS NULL
-                OR try_cast(data['value'] AS DOUBLE) < 0
+                OR NOT (try_cast(data['value'] AS DOUBLE)
+                    BETWEEN 0 AND 1.7976931348623157E308)
             ) THEN 'invalid OpenAQ measurement' END,
             CASE WHEN source IN ('esp32_pm_sensor', 'iot_sensor_simulator', 'wokwi_esp32') AND (
                 metadata['device_id'] IS NULL
@@ -270,6 +282,8 @@ def validation_errors():
                 map_values(data),
                 value -> try_cast(value AS DOUBLE) IS NOT NULL
                     AND NOT isnan(try_cast(value AS DOUBLE))
+                    AND try_cast(value AS DOUBLE)
+                        BETWEEN -1.7976931348623157E308 AND 1.7976931348623157E308
             ) THEN 'non-numeric meteorological measurement' END,
             CASE WHEN source IN ('open_meteo_air_quality', 'open_meteo_weather')
                 AND NOT forall(
@@ -301,8 +315,7 @@ def publish_batch_notification(spark, dataset_name, batch_id, row_count, silver_
         ).alias("value"),
     )
     (
-        payload.write
-        .format("kafka")
+        with_kafka_security_options(payload.write.format("kafka"))
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
         .option("topic", SILVER_NOTIFICATION_TOPIC)
         .save()
@@ -416,8 +429,36 @@ def write_batch(batch, batch_id, dataset_name, spark):
                 batch_id,
             )
 
+        # Verify durable Parquet output before publishing a notification.
+        # A cached micro-batch count is not proof that every row reached disk.
+        if counts["valid_count"]:
+            if not os.path.isfile(os.path.join(silver_batch_path, "_SUCCESS")):
+                raise RuntimeError(
+                    f"Silver batch is missing its commit marker: {silver_batch_path}"
+                )
+            persisted_valid_count = spark.read.parquet(silver_batch_path).count()
+            if persisted_valid_count != counts["valid_count"]:
+                raise RuntimeError(
+                    "Silver persisted row-count mismatch: "
+                    f"dataset={dataset_name}, batch={batch_id}, "
+                    f"expected={counts['valid_count']}, actual={persisted_valid_count}"
+                )
+
+        if counts["rejected_count"]:
+            if not os.path.isfile(os.path.join(quarantine_batch_path, "_SUCCESS")):
+                raise RuntimeError(
+                    f"Quarantine batch is missing its commit marker: {quarantine_batch_path}"
+                )
+            persisted_rejected_count = spark.read.parquet(quarantine_batch_path).count()
+            if persisted_rejected_count != counts["rejected_count"]:
+                raise RuntimeError(
+                    "Quarantine persisted row-count mismatch: "
+                    f"dataset={dataset_name}, batch={batch_id}, "
+                    f"expected={counts['rejected_count']}, actual={persisted_rejected_count}"
+                )
+
         logger.info(
-            "Processed Silver batch | dataset=%s | batch=%s | valid=%s | quarantined=%s",
+            "Processed and verified Silver batch | dataset=%s | batch=%s | valid=%s | quarantined=%s",
             dataset_name,
             batch_id,
             counts["valid_count"],
@@ -451,7 +492,7 @@ def create_stream(spark, topic, dataset_name):
 
     query = (
         records
-        .withWatermark("dedupe_time", "7 days")
+        .withWatermark("dedupe_time", WATERMARK_DELAY)
         .dropDuplicatesWithinWatermark(["record_id"])
         .writeStream
         .outputMode("append")

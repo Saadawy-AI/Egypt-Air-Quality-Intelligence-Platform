@@ -1,4 +1,3 @@
-import json
 import pytest
 
 from unittest.mock import MagicMock, patch
@@ -59,7 +58,7 @@ def test_custom_topics():
 
     with patch(
         "ingestion.consumers.kafka_consumer.KafkaConsumer"
-    ) as mock_kafka:
+    ):
 
         client = KafkaConsumerClient(
             topics=custom_topics

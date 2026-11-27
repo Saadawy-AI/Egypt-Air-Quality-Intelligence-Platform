@@ -1,2 +1,2 @@
-pyarrow
-psycopg[binary]
+pyarrow==26.0.1
+psycopg[binary]==3.2.9

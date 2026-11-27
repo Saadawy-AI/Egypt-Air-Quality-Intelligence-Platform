@@ -41,6 +41,18 @@ def sensor():
     }
 
 
+def test_governorate_resolves_from_open_aq_coordinates():
+    station = {
+        "id": 6528506,
+        "name": "Walkthru Earth Main",
+        "coordinates": {
+            "latitude": 30.099407670574287,
+            "longitude": 31.63850168272893,
+        },
+    }
+    assert openaq_pipeline._governorate_for_location(station) == "Cairo"
+
+
 def test_pipeline_successful_processing(
     monkeypatch,
     location,
@@ -59,7 +71,7 @@ def test_pipeline_successful_processing(
         }
     )
 
-    def fake_normalizer(measurement, location, sensor):
+    def fake_normalizer(measurement, location, sensor, governorate=None):
 
         return {
             "source": "openaq",
@@ -148,7 +160,7 @@ def test_pipeline_rejects_invalid_record(
     monkeypatch.setattr(
         openaq_pipeline,
         "normalize_openaq_measurement",
-        lambda measurement, location, sensor: {
+        lambda measurement, location, sensor, governorate=None: {
             "source": "openaq",
             "data": {
                 "value": measurement["value"]
@@ -241,7 +253,7 @@ def test_pipeline_processes_multiple_measurements(
     monkeypatch.setattr(
         openaq_pipeline,
         "normalize_openaq_measurement",
-        lambda measurement, location, sensor: {
+        lambda measurement, location, sensor, governorate=None: {
             "data": {
                 "value": measurement["value"],
                 "pollutant": sensor["parameter"]["name"]
@@ -299,7 +311,7 @@ def test_pipeline_continues_after_location_failure(
     monkeypatch.setattr(
         openaq_pipeline,
         "normalize_openaq_measurement",
-        lambda measurement, location, sensor: {
+        lambda measurement, location, sensor, governorate=None: {
             "source": "openaq",
             "data": {
                 "value": measurement["value"]

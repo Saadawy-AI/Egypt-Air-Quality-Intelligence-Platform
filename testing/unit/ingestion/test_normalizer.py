@@ -1,4 +1,3 @@
-import pytest
 
 from ingestion.processors.normalizer import (
     normalize_openaq_measurement,

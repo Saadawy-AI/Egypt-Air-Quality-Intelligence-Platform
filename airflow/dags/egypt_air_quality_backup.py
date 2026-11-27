@@ -12,6 +12,7 @@ from pathlib import Path
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.utils.trigger_rule import TriggerRule
+from platform_common import send_failure_alert
 
 BACKUPS = Path("/opt/airflow/backups")
 MODEL_ROOT = Path("/opt/project-models/pm25")
@@ -20,28 +21,6 @@ DATA_ROOT = Path("/opt/project-data")
 CONTROL_URL = os.getenv("CONTROL_API_URL", "http://source-control-api:8088").rstrip("/")
 SPARK_SOURCES = ("spark_bronze", "spark_silver", "spark_gold")
 
-
-def send_failure_alert(context):
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if not token or not chat_id:
-        print("Airflow alert skipped: Telegram credentials are not configured.")
-        return
-    ti = context.get("task_instance")
-    dag_id = context.get("dag").dag_id if context.get("dag") else "unknown"
-    task_id = ti.task_id if ti else "unknown"
-    payload = json.dumps({
-        "chat_id": chat_id,
-        "text": f"Airflow task failed\\nDAG: {dag_id}\\nTask: {task_id}\\nRun: {context.get('run_id', 'unknown')}",
-    }).encode()
-    request = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data=payload, headers={"Content-Type": "application/json"},
-    )
-    try:
-        urllib.request.urlopen(request, timeout=10).read()
-    except Exception as exc:
-        print(f"Could not deliver Airflow failure alert: {exc}")
 
 
 def control_spark(source, action):
